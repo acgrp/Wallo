@@ -45,5 +45,14 @@ public final class MissionGenerationDto {
         }
     }
 
-    public record Result(Long missionCycleId, Long userId, int missionCount, String status) {}
+    public record Result(
+            Long userId,
+            int missionCount,
+            String status,
+            String failureReason
+    ) {
+        public Result(Long userId, int missionCount, String status) {
+            this(userId, missionCount, status, null);
+        }
+    }
 }

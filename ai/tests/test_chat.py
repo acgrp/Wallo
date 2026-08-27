@@ -6,8 +6,13 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import ValidationError
 
+from app.financial_assistant.tools.registry import (
+    TOOL_SCHEMAS,
+    select_route_tool_schemas,
+)
 from app.chat.schemas import (
     AccountSubtype,
+    AssetAnalysisContext,
     ChatRequest,
     GoalFundAvailability,
 )
@@ -49,6 +54,7 @@ def test_chat_passes_conversation_history_to_financial_agent():
         None,
         None,
         None,
+        asset_analysis_context=None,
     )
 
 
@@ -70,6 +76,7 @@ def test_chat_passes_long_term_summary_to_financial_agent():
         None,
         None,
         None,
+        asset_analysis_context=None,
     )
 
 
@@ -115,6 +122,51 @@ def test_chat_parses_and_passes_financial_context_to_financial_agent():
         context,
         None,
         None,
+        asset_analysis_context=None,
+    )
+
+
+def test_chat_parses_and_passes_asset_analysis_context_to_financial_agent():
+    client = Mock()
+    service = ChatService(client)
+    request = ChatRequest.model_validate({
+        "message": "내 자산을 분석해줘",
+        "assetAnalysisContext": {
+            "totalAssets": 120_000_000,
+            "totalDebt": 20_000_000,
+            "netAssets": 100_000_000,
+            "monthlyIncome": 5_000_000,
+            "monthlyExpense": 3_000_000,
+            "monthlySaving": 2_000_000,
+            "savingRatePercent": 40.0,
+            "assetComposition": [
+                {
+                    "category": "DEPOSIT",
+                    "amount": 80_000_000,
+                    "sharePercent": 66.7,
+                },
+            ],
+            "asOf": "2026-08-20T12:00:00+09:00",
+        },
+    })
+
+    with patch(
+        "app.chat.service.FinancialAgent.run",
+        return_value="자산 분석 결과입니다.",
+    ) as run_mock:
+        service.chat(request)
+
+    context = request.asset_analysis_context
+    assert isinstance(context, AssetAnalysisContext)
+    assert context.net_assets == 100_000_000
+    run_mock.assert_called_once_with(
+        "내 자산을 분석해줘",
+        [],
+        None,
+        None,
+        None,
+        None,
+        asset_analysis_context=context,
     )
 
 
@@ -164,9 +216,42 @@ def test_chat_generates_title_when_requested():
 
     with (
         patch("app.chat.service.FinancialAgent.run", return_value="저축 계획을 세워볼게요."),
-        patch("app.chat.service.generate_conversation_title", return_value="3년 전세자금 계획") as title_mock,
+        patch("app.chat.service.build_conversation_title", return_value="3년 전세자금 계획") as title_mock,
     ):
         response = service.chat(ChatRequest(message="전세자금을 모으고 싶어", generateTitle=True))
 
     assert response.title == "3년 전세자금 계획"
-    title_mock.assert_called_once_with(client, "전세자금을 모으고 싶어", "저축 계획을 세워볼게요.")
+    title_mock.assert_called_once_with("전세자금을 모으고 싶어")
+    assert client.chat.completions.create.call_count == 0
+
+
+def _tool_names(schemas):
+    return {
+        schema["function"]["name"]
+        for schema in schemas
+    }
+
+
+def test_route_tool_selection_uses_only_product_tool_for_product_request():
+    schemas = select_route_tool_schemas("12개월 적금 상품을 추천해줘")
+
+    assert _tool_names(schemas) == {"recommend_financial_products"}
+
+
+def test_route_tool_selection_groups_asset_tools():
+    schemas = select_route_tool_schemas("내 자산과 부채를 분석해줘")
+
+    assert _tool_names(schemas) == {
+        "analyze_assets",
+        "generate_financial_report",
+    }
+
+
+def test_route_tool_selection_omits_tools_for_simple_greeting():
+    assert select_route_tool_schemas("안녕") == []
+
+
+def test_route_tool_selection_keeps_full_set_for_ambiguous_financial_request():
+    schemas = select_route_tool_schemas("월급 관리 방향을 알려줘")
+
+    assert schemas == TOOL_SCHEMAS

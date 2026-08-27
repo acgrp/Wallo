@@ -4,6 +4,8 @@ import DOMPurify from "dompurify"
 import { marked } from "marked"
 import AssetAnalysisResult from "@/components/analysis/AssetAnalysisResult.vue"
 import AnalysisResult from "@/components/analysis/AnalysisResult.vue"
+import ProductRecommendationResult from "@/components/analysis/ProductRecommendationResult.vue"
+import { repairParenthesizedStrongEmphasis } from "@/utils/markdown"
 
 const props = defineProps({
   message: {
@@ -24,12 +26,18 @@ marked.setOptions({
 })
 
 const renderedMarkdown = computed(() =>
-  DOMPurify.sanitize(marked.parse(displayedContent.value)),
+  DOMPurify.sanitize(
+    marked.parse(repairParenthesizedStrongEmphasis(displayedContent.value)),
+  ),
 )
 
 const isAnalysisMessage = computed(() =>
   props.message.role === "assistant"
-  && Boolean(props.message.consumptionAnalysis || props.message.assetAnalysis),
+  && Boolean(
+    props.message.consumptionAnalysis
+      || props.message.assetAnalysis
+      || props.message.productRecommendation,
+  ),
 )
 
 const stopTyping = () => {
@@ -87,6 +95,7 @@ watch(
     props.message.animate,
     props.message.consumptionAnalysis,
     props.message.assetAnalysis,
+    props.message.productRecommendation,
   ],
   startTyping,
   { immediate: true },
@@ -101,12 +110,15 @@ onBeforeUnmount(completeTyping)
       class="message-bubble"
       :class="{ 'message-bubble--analysis': isAnalysisMessage }"
     >
-      <span class="message-label">
-        {{ message.role === "assistant" ? "Wallo AI" : "나" }}
-      </span>
+      <ProductRecommendationResult
+        v-if="message.role === 'assistant' && message.productRecommendation"
+        :recommendation="message.productRecommendation"
+        :reason="message.content"
+      />
       <AssetAnalysisResult
-        v-if="message.role === 'assistant' && message.assetAnalysis"
+        v-else-if="message.role === 'assistant' && message.assetAnalysis"
         :analysis="message.assetAnalysis"
+        :show-intro="false"
       />
       <AnalysisResult
         v-else-if="message.role === 'assistant' && message.consumptionAnalysis"
@@ -115,10 +127,10 @@ onBeforeUnmount(completeTyping)
       <div
         v-else-if="message.role === 'assistant'"
         class="message-content message-content--markdown"
+        :class="{ 'message-content--typing': isTyping }"
         v-html="renderedMarkdown"
       ></div>
       <p v-else class="message-content">{{ displayedContent }}</p>
-      <span v-if="isTyping" class="typing-cursor" aria-hidden="true"></span>
     </div>
   </div>
 </template>
@@ -142,21 +154,10 @@ onBeforeUnmount(completeTyping)
   max-width: 92%;
 }
 
-.message-label {
-  display: block;
-  margin-bottom: 4px;
-  color: #7b849b;
-  font-size: 12px;
-}
-
-.message-row--user .message-label {
-  text-align: right;
-}
-
 .message-content {
   margin: 0;
   padding: 12px 14px;
-  background: #f4f3fb;
+  background: var(--wallo-color-surface-soft);
   border-radius: 14px;
   line-height: 1.35;
   white-space: pre-wrap;
@@ -164,7 +165,7 @@ onBeforeUnmount(completeTyping)
 
 .message-row--user .message-content {
   color: #fff;
-  background: #7062de;
+  background: #4f8fe8;
 }
 
 .message-content--markdown {
@@ -178,6 +179,27 @@ onBeforeUnmount(completeTyping)
 
 .message-content--markdown :deep(> :last-child) {
   margin-bottom: 0;
+}
+
+.message-content--typing:empty::after,
+.message-content--typing :deep(> p:last-child)::after,
+.message-content--typing :deep(> h1:last-child)::after,
+.message-content--typing :deep(> h2:last-child)::after,
+.message-content--typing :deep(> h3:last-child)::after,
+.message-content--typing :deep(> h4:last-child)::after,
+.message-content--typing :deep(> h5:last-child)::after,
+.message-content--typing :deep(> h6:last-child)::after,
+.message-content--typing :deep(> ul:last-child > li:last-child)::after,
+.message-content--typing :deep(> ol:last-child > li:last-child)::after,
+.message-content--typing :deep(> blockquote:last-child > :last-child)::after {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 4px;
+  vertical-align: text-bottom;
+  background: #4f8fe8;
+  content: "";
+  animation: cursor-blink 0.8s step-end infinite;
 }
 
 .message-content--markdown :deep(h1),
@@ -215,7 +237,7 @@ onBeforeUnmount(completeTyping)
 
 .message-content--markdown :deep(code) {
   padding: 0.15em 0.35em;
-  background: #e8e6f3;
+  background: var(--wallo-color-info-bg);
   border-radius: 5px;
   font-size: 0.9em;
 }
@@ -237,21 +259,11 @@ onBeforeUnmount(completeTyping)
 .message-content--markdown :deep(blockquote) {
   padding-left: 12px;
   color: #666d80;
-  border-left: 3px solid #9b91e7;
+  border-left: 3px solid #8fb3e8;
 }
 
 .message-content--markdown :deep(a) {
-  color: #5749c5;
-}
-
-.typing-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin: 4px 0 0 4px;
-  vertical-align: text-bottom;
-  background: #7062de;
-  animation: cursor-blink 0.8s step-end infinite;
+  color: #3f78cd;
 }
 
 @keyframes cursor-blink {

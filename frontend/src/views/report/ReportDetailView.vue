@@ -4,15 +4,31 @@ import { RouterLink, useRoute } from "vue-router"
 import { getReportDetail } from "@/api/reportApi"
 import ReportSection from "@/components/report/ReportSection.vue"
 import TermInfoPanel from "@/components/report/TermInfoPanel.vue"
+import AppAlert from "@/components/ui/AppAlert.vue"
+import AppButton from "@/components/ui/AppButton.vue"
+import AppCard from "@/components/ui/AppCard.vue"
+import AppPageHeader from "@/components/ui/AppPageHeader.vue"
+import AppState from "@/components/ui/AppState.vue"
+import { useUserStore } from "@/stores/userStore"
+import { getCachedResource, getResource, hasInFlightResource } from "@/utils/resourceCache"
 import { markReportAsRead } from "@/utils/report/reportReadState"
 import { buildTermSegments } from "@/utils/report/termHighlight"
 
 const route = useRoute()
+const userStore = useUserStore()
 const newsId = computed(() => route.params.newsId)
+const currentUserId = computed(() => userStore.user?.id ?? null)
 
+const REPORT_DETAIL_STALE_TIME = 5 * 60 * 1000
+const cacheScope = {}
+const detailCacheKey = (userId, id) => `reports:detail:${userId ?? "anonymous"}:${id}`
 const report = ref(null)
-const isLoading = ref(true)
+const initialLoading = ref(true)
+const refreshing = ref(false)
 const errorMessage = ref("")
+const loadedNewsId = ref(null)
+const loadedUserId = ref(null)
+let loadSequence = 0
 
 // 밑줄 강조 대상 5개 섹션. 순서대로 처리해야 "상세 페이지 전체 기준 첫 등장 1회" 규칙이
 // 위에서 아래로 읽는 사용자 시선과 일치한다(먼저 나오는 섹션에서 강조되고, 같은 용어가 나중
@@ -66,7 +82,10 @@ const updateTermPopoverPosition = () => {
     left = reportCardRect.left - TERM_CARD_GAP - TERM_CARD_WIDTH
   }
 
-  left = Math.max(VIEWPORT_PADDING, Math.min(left, window.innerWidth - TERM_CARD_WIDTH - VIEWPORT_PADDING))
+  left = Math.max(
+    VIEWPORT_PADDING,
+    Math.min(left, window.innerWidth - TERM_CARD_WIDTH - VIEWPORT_PADDING),
+  )
   top = Math.max(
     VIEWPORT_PADDING,
     Math.min(top, window.innerHeight - cardHeight - VIEWPORT_PADDING),
@@ -125,23 +144,97 @@ const formattedDate = computed(() => {
   })
 })
 
-const loadDetail = async () => {
-  isLoading.value = true
+const reportMeta = computed(() => [report.value?.source, formattedDate.value]
+  .filter(Boolean)
+  .join(" · "))
+
+const loadDetail = async ({ force = false } = {}) => {
+  const requestedNewsId = newsId.value
+  const requestedUserId = currentUserId.value
+  const requestId = ++loadSequence
   errorMessage.value = ""
   closeMobileTermCard()
 
+  if (!requestedNewsId) {
+    report.value = null
+    loadedNewsId.value = null
+    loadedUserId.value = null
+    initialLoading.value = false
+    refreshing.value = false
+    return null
+  }
+
+  const key = detailCacheKey(requestedUserId, requestedNewsId)
+  const cachedReport =
+    !force && !hasInFlightResource(key, { scope: cacheScope })
+      ? getCachedResource(key, {
+          scope: cacheScope,
+          staleTime: REPORT_DETAIL_STALE_TIME,
+        })
+      : undefined
+
+  if (cachedReport !== undefined) {
+    report.value = cachedReport
+    loadedNewsId.value = requestedNewsId
+    loadedUserId.value = requestedUserId
+    initialLoading.value = false
+    refreshing.value = false
+    markReportAsRead(requestedNewsId, requestedUserId)
+    return cachedReport
+  }
+
+  const hasExistingReport =
+    loadedNewsId.value === requestedNewsId &&
+    loadedUserId.value === requestedUserId &&
+    Boolean(report.value)
+  initialLoading.value = !hasExistingReport
+  refreshing.value = hasExistingReport
+  if (!hasExistingReport) report.value = null
+
   try {
-    report.value = await getReportDetail(newsId.value)
-    markReportAsRead(newsId.value)
+    const nextReport = await getResource(key, () => getReportDetail(requestedNewsId), {
+      scope: cacheScope,
+      force,
+      staleTime: REPORT_DETAIL_STALE_TIME,
+    })
+
+    if (
+      requestId !== loadSequence ||
+      newsId.value !== requestedNewsId ||
+      currentUserId.value !== requestedUserId
+    ) {
+      return nextReport
+    }
+
+    report.value = nextReport
+    loadedNewsId.value = requestedNewsId
+    loadedUserId.value = requestedUserId
+    markReportAsRead(requestedNewsId, requestedUserId)
+    return nextReport
   } catch (error) {
-    errorMessage.value = error.message
+    if (
+      requestId === loadSequence &&
+      newsId.value === requestedNewsId &&
+      currentUserId.value === requestedUserId
+    ) {
+      errorMessage.value = error.message
+      if (!hasExistingReport) {
+        report.value = null
+        loadedNewsId.value = null
+        loadedUserId.value = null
+      }
+    }
+    return null
   } finally {
-    isLoading.value = false
+    if (requestId === loadSequence) {
+      initialLoading.value = false
+      refreshing.value = false
+    }
   }
 }
 
 onMounted(() => {
-  loadDetail()
+  void loadDetail()
   window.addEventListener("resize", handleViewportChange)
   window.addEventListener("scroll", handleViewportChange, true)
   window.addEventListener("keydown", handleEscape)
@@ -153,56 +246,72 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleEscape)
 })
 
-// 같은 라우트 컴포넌트를 재사용하며 newsId만 바뀌는 경우(다른 리포트로 이동)에도 다시 불러옴
-watch(newsId, () => {
-  loadDetail()
+// 같은 라우트 컴포넌트를 재사용하며 뉴스나 회원이 바뀌는 경우에도 다시 불러옴
+watch([newsId, currentUserId], () => {
+  void loadDetail()
 })
 </script>
 
 <template>
-  <section class="report-detail-view container-fluid py-4 px-4">
-    <RouterLink to="/reports" class="btn btn-link ps-0 mb-3 text-decoration-none">
-      <i class="bi bi-arrow-left me-1" aria-hidden="true"></i>
-      목록으로
-    </RouterLink>
-
-    <div v-if="isLoading" class="text-center py-5">
-      <div class="spinner-border text-primary" role="status">
-        <span class="visually-hidden">불러오는 중...</span>
-      </div>
-    </div>
-
-    <div
-      v-else-if="errorMessage"
-      class="alert alert-danger d-flex flex-wrap justify-content-between align-items-center gap-2"
-      role="alert"
+  <section class="report-detail-view">
+    <AppPageHeader
+      :title="report?.title || '금융 리포트'"
+      compact
     >
-      <span>{{ errorMessage }}</span>
-      <button type="button" class="btn btn-sm btn-outline-danger" @click="loadDetail">다시 시도</button>
-    </div>
+      <template #leading>
+        <RouterLink to="/reports" class="report-back-link pressable" aria-label="금융 리포트 목록으로 이동">
+          <i class="bi bi-chevron-left" aria-hidden="true"></i>
+        </RouterLink>
+      </template>
+    </AppPageHeader>
 
-    <div v-else-if="report" class="row g-4">
-      <div class="col-12 col-lg-8">
-        <div ref="reportCard" class="report-detail-card card border-0 shadow-sm">
-          <div class="card-body p-4 p-md-5">
-            <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-              <span class="badge rounded-pill text-bg-light">{{ report.category }}</span>
-            </div>
+    <AppState
+      v-if="initialLoading"
+      class="report-detail-state"
+      type="loading"
+      title="리포트를 불러오는 중입니다."
+      message="뉴스 내용을 분석하고 있습니다."
+    />
 
-            <h1 class="h3 fw-bold mb-2">{{ report.title }}</h1>
-            <p class="text-secondary mb-4">{{ report.source }} · {{ formattedDate }}</p>
+    <AppState
+      v-else-if="errorMessage && !report"
+      class="report-detail-state"
+      type="error"
+      title="리포트를 불러오지 못했습니다."
+      :message="errorMessage"
+      action-text="다시 시도"
+      action-variant="danger"
+      @action="loadDetail({ force: true })"
+    />
 
+    <div v-else-if="report" class="report-detail-layout">
+      <div v-if="refreshing" class="report-refresh-status" role="status">
+        최신 리포트를 확인하는 중...
+      </div>
+
+      <AppAlert v-if="errorMessage" class="report-detail-refresh-error" variant="warning">
+        <span>{{ errorMessage }}</span>
+        <AppButton variant="outline" size="sm" @click="loadDetail({ force: true })">
+          다시 시도
+        </AppButton>
+      </AppAlert>
+
+      <p v-if="reportMeta" class="report-detail-meta">{{ reportMeta }}</p>
+
+      <div ref="reportCard" class="report-detail-card-shell">
+        <section v-if="hasReport" class="summary-highlight bg-primary-subtle rounded-4 p-4 mb-4">
+          <h2 class="h6 fw-bold d-flex align-items-center gap-2 mb-3">
+            <i class="bi bi-clipboard-data" aria-hidden="true"></i>
+            핵심 요약
+          </h2>
+          <ul class="summary-points mb-0">
+            <li v-for="(point, index) in report.summaryPoints" :key="index">{{ point }}</li>
+          </ul>
+        </section>
+
+        <AppCard class="report-detail-card" padding="lg">
+          <div class="report-detail-card-content">
             <template v-if="hasReport">
-              <section class="summary-highlight bg-primary-subtle rounded-4 p-4 mb-4">
-                <h2 class="h6 fw-bold d-flex align-items-center gap-2 mb-3">
-                  <i class="bi bi-clipboard-data" aria-hidden="true"></i>
-                  핵심 요약
-                </h2>
-                <ul class="summary-points mb-0">
-                  <li v-for="(point, index) in report.summaryPoints" :key="index">{{ point }}</li>
-                </ul>
-              </section>
-
               <ReportSection
                 icon="bi-newspaper"
                 title="어떤 일이 있었나요?"
@@ -245,42 +354,131 @@ watch(newsId, () => {
               />
             </template>
 
-            <div v-else class="text-center py-5 not-ready-panel">
-              <i class="bi bi-hourglass-split fs-1 text-secondary d-block mb-3" aria-hidden="true"></i>
-              <p class="text-secondary mb-0">아직 리포트가 준비되지 않았습니다.</p>
-            </div>
+            <AppState
+              v-else
+              class="not-ready-panel"
+              type="empty"
+              title="아직 리포트가 준비되지 않았습니다."
+              message="AI 분석이 완료되면 이곳에서 상세 내용을 확인할 수 있습니다."
+              compact
+            />
           </div>
-        </div>
+        </AppCard>
       </div>
-
-      <!-- 데스크톱 전용 우측 용어 설명 패널. 본문 위에 겹치는 tooltip 대신, 스크롤을 따라
-           함께 움직이다가(sticky) 본문을 가리지 않는 여백 영역에 고정된다. -->
     </div>
+
+    <AppState
+      v-else
+      class="report-detail-state"
+      type="empty"
+      title="리포트를 찾을 수 없습니다."
+      message="목록으로 돌아가 다른 리포트를 선택해 주세요."
+    />
 
     <Teleport to="body">
       <div
         v-if="hoveredTerm"
         ref="termPopover"
-        class="term-popover-card card border-0 shadow d-none d-lg-block"
+        class="term-popover-card d-none d-lg-block"
         :style="termPopoverStyle"
       >
-        <div class="card-body p-4">
+        <AppCard padding="md">
           <TermInfoPanel :term="hoveredTerm" />
-        </div>
+        </AppCard>
       </div>
     </Teleport>
 
-    <!-- 모바일/태블릿 fallback: 우측 여백이 없어 패널을 고정 배치할 수 없으므로, 용어를
-         탭했을 때만 화면 하단에 카드로 띄운다. 닫기 버튼으로 명시적으로 닫는다(hover가 없어서). -->
     <div v-if="clickedTerm" class="term-mobile-card d-lg-none">
-      <TermInfoPanel :term="clickedTerm" closable @close="closeMobileTermCard" />
+      <AppCard padding="md">
+        <TermInfoPanel :term="clickedTerm" closable @close="closeMobileTermCard" />
+      </AppCard>
     </div>
   </section>
 </template>
 
 <style scoped>
+.report-detail-view {
+  --report-detail-content-offset: calc(38px + var(--wallo-space-4));
+  width: 100%;
+  padding: 0 0 var(--wallo-space-6);
+}
+
+.report-back-link {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  color: #555b6e;
+  background: transparent;
+  font-size: 1.1rem;
+  text-decoration: none;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.report-back-link:hover,
+.report-back-link:focus-visible {
+  color: #4d82d6;
+  background: #edf6ff;
+}
+
+.report-back-link:active {
+  transform: scale(0.98);
+}
+
+.report-detail-state {
+  width: min(calc(100% - var(--report-detail-content-offset)), 980px);
+  min-height: 320px;
+  margin-left: var(--report-detail-content-offset);
+}
+
+.report-detail-layout {
+  width: min(calc(100% - var(--report-detail-content-offset)), 980px);
+  margin-left: var(--report-detail-content-offset);
+}
+
+.report-refresh-status,
+.report-detail-refresh-error {
+  margin-bottom: var(--wallo-space-4);
+}
+
+.report-refresh-status {
+  color: var(--wallo-color-text-muted);
+  font-size: 0.875rem;
+}
+
+.report-detail-refresh-error {
+  align-items: center;
+}
+
+.report-detail-meta {
+  margin: 0 0 var(--wallo-space-2);
+  color: var(--wallo-color-text-muted);
+  font-size: 0.875rem;
+}
+
+.report-detail-refresh-error :deep(.app-alert__message) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wallo-space-3);
+}
+
+.report-detail-card-shell {
+  min-width: 0;
+}
+
 .report-detail-card {
-  border-radius: 20px;
+  width: 100%;
+}
+
+.summary-highlight {
+  box-shadow: var(--wallo-shadow-card);
 }
 
 .summary-points {
@@ -298,7 +496,6 @@ watch(newsId, () => {
 .term-popover-card {
   position: fixed;
   z-index: 1080;
-  border-radius: 20px;
 }
 
 .term-mobile-card {
@@ -310,8 +507,20 @@ watch(newsId, () => {
   max-height: 45vh;
   overflow-y: auto;
   padding: 1rem 1.25rem;
-  background-color: var(--bs-body-bg);
-  border-top: 1px solid var(--bs-border-color);
-  box-shadow: 0 -0.5rem 1.5rem rgba(0, 0, 0, 0.12);
+  background: var(--wallo-color-surface);
+  border-top: 1px solid var(--wallo-color-border);
+  box-shadow: var(--wallo-shadow-modal);
+}
+
+@media (max-width: 576px) {
+  .report-detail-view {
+    --report-detail-content-offset: 0px;
+    padding-bottom: var(--wallo-space-5);
+  }
+
+  .report-detail-refresh-error :deep(.app-alert__message) {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 </style>

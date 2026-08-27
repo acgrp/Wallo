@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { formatNumber } from "@/commonUtils/formatters";
+import { formatNumber } from "@/utils/formatters";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -150,9 +150,9 @@ button.calendar-day:hover,
 button.calendar-day:focus-visible {
   position: relative;
   z-index: 1;
-  outline: 2px solid #d9d3ff;
+  outline: 2px solid #d4e6f8;
   outline-offset: -2px;
-  background: #faf9ff;
+  background: #f8fbff;
 }
 
 .calendar-day-blank {

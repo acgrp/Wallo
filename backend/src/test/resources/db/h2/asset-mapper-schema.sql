@@ -1,10 +1,23 @@
 -- Shared H2 schema for asset mapper integration tests.
--- Keep this aligned with the source-identity constraints in database/mysql/dbInit.sql.
+-- Keep this aligned with the source-identity constraints in database/dbInit.sql.
 
 CREATE TABLE USERS (
     id BIGINT PRIMARY KEY,
     annual_salary BIGINT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE CONNECTIONS (
+    connection_id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    deleted_at TIMESTAMP NULL
+);
+
+CREATE TABLE ACCOUNTS (
+    account_id BIGINT PRIMARY KEY,
+    connection_id BIGINT NOT NULL,
+    status VARCHAR(20) NOT NULL
 );
 
 CREATE TABLE CARDS (

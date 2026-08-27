@@ -3,22 +3,22 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { RouterLink, useRoute, useRouter } from "vue-router"
 import { getCurrentChallenge } from "@/api/challengeApi"
 import AppDialog from "@/components/common/AppDialog.vue"
+import AppButton from "@/components/ui/AppButton.vue"
+import { useUserStore } from "@/stores/userStore"
+import { getAppToday } from "@/utils/appDate"
 
 // public 폴더의 이미지는 루트 절대 경로로 참조함.
-const brandPenguin = "/images/profiles/penguin-coins.svg"
-const thinkingPenguin = "/images/profiles/thinking-penguin.svg"
-const brandLogoSource = ref(brandPenguin)
+const sidebarIllustration = "/images/illustrations/wallo-surfing.webp"
 
 const primaryMenus = [
-  { icon: "🏠", label: "대시보드", to: "/dashboard" },
-  { icon: "💳", label: "자산", to: "/assets" },
-  { icon: "🤖", label: "AI 컨설팅", to: "/ai-consulting" },
+  { icon: "bi bi-house-fill", label: "대시보드", to: "/dashboard" },
+  { icon: "bi bi-bar-chart-line", label: "자산관리", to: "/assets" },
+  { icon: "bi bi-robot", label: "AI 컨설팅", to: "/ai-consulting" },
 ]
 
 const utilityMenus = [
-  { icon: "🛍️", label: "포인트 샵", to: "/point-shop" },
-  { icon: "📇", label: "금융 리포트", to: "/reports" },
-  { icon: "⚙️", label: "설정", to: "/users/profile" },
+  { icon: "bi bi-gift", label: "포인트 샵", to: "/point-shop" },
+  { icon: "bi bi-newspaper", label: "금융 리포트", to: "/reports" },
 ]
 
 const savingsTips = [
@@ -56,7 +56,7 @@ const savingsTips = [
 ]
 
 const getTodayKey = () => {
-  const today = new Date()
+  const today = getAppToday()
   return Math.floor(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) / 86400000)
 }
 
@@ -65,7 +65,7 @@ const dailySavingsTip = computed(() => savingsTips[Math.abs(todayKey.value) % sa
 let dailyTipTimer
 
 const scheduleDailyTipRefresh = () => {
-  const now = new Date()
+  const now = getAppToday()
   const nextDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1)
   dailyTipTimer = window.setTimeout(
     () => {
@@ -81,6 +81,11 @@ onBeforeUnmount(() => window.clearTimeout(dailyTipTimer))
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
+// 자산관리 하위 메뉴 열림 여부를 관리함
+const isAssetOpen = ref(false)
+// AI 컨설팅 하위 메뉴 열림 여부를 관리함
+const isAiOpen = ref(false)
 // 챌린지 하위 메뉴 열림 여부를 관리함
 const isChallengeOpen = ref(false)
 const isChallengeChecking = ref(false)
@@ -92,42 +97,97 @@ const isChallengeRoute = computed(
   () =>
     route.path === "/challenges/current" ||
     route.path.startsWith("/challenges/") ||
-    route.path === "/users/me/challenge-dashboard",
+    route.path === "/users/me/challenge-dashboard" ||
+    route.path === "/my-feeds",
 )
+const isAssetRoute = computed(
+  () => route.path === "/assets" || route.path.startsWith("/assets/"),
+)
+const assetGroupClass = computed(() => ({
+  "asset-group-active": isAssetRoute.value,
+}))
+const assetCollapseIconClass = computed(() => ({
+  "collapse-icon-open": isAssetOpen.value,
+}))
+const monthlyReportClass = computed(() => ({
+  "submenu-link-active": route.path === "/assets/expenses",
+}))
+const categoryExpenseClass = computed(() => ({
+  "submenu-link-active": route.path === "/assets/categories",
+}))
+const isAiRoute = computed(
+  () => route.path === "/ai-consulting" || route.path === "/ai-analysis",
+)
+const aiGroupClass = computed(() => ({
+  "ai-group-active": isAiRoute.value,
+}))
+const aiCollapseIconClass = computed(() => ({
+  "collapse-icon-open": isAiOpen.value,
+}))
+const aiAnalysisClass = computed(() => ({
+  "submenu-link-active": route.path === "/ai-analysis",
+}))
 const challengeGroupClass = computed(() => ({
   "challenge-group-active": isChallengeRoute.value,
 }))
-const collapseMarkClass = computed(() => ({
-  "collapse-mark-open": isChallengeOpen.value,
+const collapseIconClass = computed(() => ({
+  "collapse-icon-open": isChallengeOpen.value,
 }))
 const weeklyRankingClass = computed(() => ({
   "submenu-link-active": route.path === "/challenges/rankings/weekly",
 }))
-const challengeFeedClass = computed(() => ({
-  "submenu-link-active": route.name === "challenge-feed" || route.path === "/challenges/current",
-}))
 const myChallengeClass = computed(() => ({
   "submenu-link-active": route.path === "/users/me/challenge-dashboard",
 }))
+const myFeedsClass = computed(() => ({
+  "submenu-link-active": route.path === "/my-feeds",
+}))
 
-// 챌린지 관련 페이지에서는 새로고침 후에도 하위 메뉴가 펼쳐짐
+// 챌린지 관련 페이지에서는 하위 메뉴를 펼치고, 외부 페이지에서는 닫음
 watch(
   isChallengeRoute,
   (isActive) => {
-    if (isActive) {
-      isChallengeOpen.value = true
-    }
+    isChallengeOpen.value = isActive
   },
   { immediate: true },
 )
 
-const toggleChallenge = () => {
-  isChallengeOpen.value = !isChallengeOpen.value
+// 자산 관련 페이지에서는 새로고침 후에도 하위 메뉴가 펼쳐짐
+watch(
+  isAssetRoute,
+  (isActive) => {
+    isAssetOpen.value = isActive
+  },
+  { immediate: true },
+)
+
+const openAssetMenu = () => {
+  isAssetOpen.value = true
 }
 
-// 로고 이미지 로드 실패 시 기존 캐릭터 이미지를 기본 이미지로 사용함
-const useDefaultBrandLogo = () => {
-  brandLogoSource.value = thinkingPenguin
+const toggleAsset = () => {
+  isAssetOpen.value = !isAssetOpen.value
+}
+
+// AI 관련 페이지에서는 새로고침 후에도 하위 메뉴가 펼쳐짐
+watch(
+  isAiRoute,
+  (isActive) => {
+    isAiOpen.value = isActive
+  },
+  { immediate: true },
+)
+
+const openAiMenu = () => {
+  isAiOpen.value = true
+}
+
+const toggleAi = () => {
+  isAiOpen.value = !isAiOpen.value
+}
+
+const toggleChallenge = () => {
+  isChallengeOpen.value = !isChallengeOpen.value
 }
 
 const showChallengeDialog = (message) => {
@@ -190,6 +250,19 @@ const moveToChallengeFeed = async () => {
 const moveToMyChallenge = () => {
   moveToChallengeMemberPage("/users/me/challenge-dashboard")
 }
+
+const moveToMyFeeds = () => {
+  moveToChallengeMemberPage("/my-feeds")
+}
+
+const handleLogout = async () => {
+  try {
+    await userStore.logout()
+    await router.replace("/login")
+  } catch (error) {
+    alert(error.message || "로그아웃에 실패했습니다.")
+  }
+}
 </script>
 
 <template>
@@ -197,88 +270,191 @@ const moveToMyChallenge = () => {
     <RouterLink
       to="/dashboard"
       class="brand d-flex align-items-center"
-      aria-label="왈로 대시보드로 이동"
+      aria-label="Wallo 대시보드로 이동"
     >
-      <img :src="brandLogoSource" class="brand-icon" alt="왈로 로고" @error="useDefaultBrandLogo" />
-      <span class="brand-name">왈로</span>
+      <span class="brand-name">Wallo</span>
     </RouterLink>
 
     <nav class="sidebar-nav d-flex flex-column">
       <div class="menu-group d-flex flex-column">
-        <RouterLink
-          v-for="menu in primaryMenus"
-          :key="menu.to"
-          :to="menu.to"
-          class="menu-item menu-link d-flex align-items-center"
-        >
-          <span class="menu-icon" aria-hidden="true">{{ menu.icon }}</span>
-          <span>{{ menu.label }}</span>
-        </RouterLink>
+        <template v-for="menu in primaryMenus" :key="menu.to">
+          <RouterLink
+            v-if="menu.to !== '/assets' && menu.to !== '/ai-consulting'"
+            :to="menu.to"
+            class="menu-item menu-link d-flex align-items-center"
+          >
+            <span class="menu-icon" aria-hidden="true">
+              <i :class="menu.icon"></i>
+            </span>
+            <span>{{ menu.label }}</span>
+          </RouterLink>
+
+          <div v-else-if="menu.to === '/assets'" class="asset-group" :class="assetGroupClass">
+            <div class="asset-heading d-flex align-items-center">
+              <RouterLink
+                to="/assets"
+                class="menu-item menu-link asset-title d-flex flex-grow-1 align-items-center"
+                @click="openAssetMenu"
+              >
+                <span class="menu-icon" aria-hidden="true">
+                  <i :class="menu.icon"></i>
+                </span>
+                <span>{{ menu.label }}</span>
+              </RouterLink>
+
+              <AppButton
+                class="collapse-toggle asset-collapse-toggle d-flex align-items-center justify-content-end"
+                variant="ghost"
+                size="sm"
+                :aria-expanded="isAssetOpen"
+                aria-controls="asset-submenu"
+                aria-label="자산관리 하위 메뉴 열기 및 닫기"
+                @click="toggleAsset"
+              >
+                <i
+                  class="bi bi-chevron-down collapse-icon ms-auto"
+                  :class="assetCollapseIconClass"
+                  aria-hidden="true"
+                ></i>
+              </AppButton>
+            </div>
+
+            <Transition name="submenu">
+              <div v-if="isAssetOpen" id="asset-submenu" class="submenu d-flex flex-column">
+                <RouterLink
+                  to="/assets/expenses"
+                  class="submenu-item submenu-link asset-monthly-report d-flex align-items-center"
+                  :class="monthlyReportClass"
+                >
+                  <span class="submenu-dot" aria-hidden="true"></span>
+                  월별 리포트
+                </RouterLink>
+                <RouterLink
+                  to="/assets/categories"
+                  class="submenu-item submenu-link d-flex align-items-center"
+                  :class="categoryExpenseClass"
+                >
+                  <span class="submenu-dot" aria-hidden="true"></span>
+                  카테고리별 소비
+                </RouterLink>
+              </div>
+            </Transition>
+          </div>
+
+          <div v-else class="ai-group" :class="aiGroupClass">
+            <div class="ai-heading d-flex align-items-center">
+              <RouterLink
+                to="/ai-consulting"
+                class="menu-item menu-link ai-title d-flex flex-grow-1 align-items-center"
+                @click="openAiMenu"
+              >
+                <span class="menu-icon" aria-hidden="true">
+                  <i :class="menu.icon"></i>
+                </span>
+                <span>{{ menu.label }}</span>
+              </RouterLink>
+
+              <AppButton
+                class="collapse-toggle ai-collapse-toggle d-flex align-items-center justify-content-end"
+                variant="ghost"
+                size="sm"
+                :aria-expanded="isAiOpen"
+                aria-controls="ai-submenu"
+                aria-label="AI 컨설팅 하위 메뉴 열기 및 닫기"
+                @click="toggleAi"
+              >
+                <i
+                  class="bi bi-chevron-down collapse-icon ms-auto"
+                  :class="aiCollapseIconClass"
+                  aria-hidden="true"
+                ></i>
+              </AppButton>
+            </div>
+
+            <Transition name="submenu">
+              <div v-if="isAiOpen" id="ai-submenu" class="submenu d-flex flex-column">
+                <RouterLink
+                  to="/ai-analysis"
+                  class="submenu-item submenu-link d-flex align-items-center"
+                  :class="aiAnalysisClass"
+                >
+                  <span class="submenu-dot" aria-hidden="true"></span>
+                  AI 분석 결과
+                </RouterLink>
+              </div>
+            </Transition>
+          </div>
+        </template>
       </div>
 
       <div class="challenge-group" :class="challengeGroupClass">
         <div class="challenge-heading d-flex align-items-center">
           <button
             type="button"
-            class="menu-item challenge-title d-flex flex-grow-1 align-items-center"
-            :aria-expanded="isChallengeOpen"
-            aria-controls="challenge-submenu"
-            @click="toggleChallenge"
+        class="menu-item challenge-title d-flex flex-grow-1 align-items-center pressable"
+            :disabled="isChallengeChecking"
+            @click="moveToChallengeFeed"
           >
-            <span class="menu-icon" aria-hidden="true">💰</span>
-            <span>절약 챌린지</span>
+            <span class="menu-icon" aria-hidden="true">
+              <i class="bi bi-cash-coin"></i>
+            </span>
+            절약 챌린지
           </button>
 
-          <button
-            type="button"
+          <AppButton
             class="collapse-toggle d-flex align-items-center justify-content-end"
+            variant="ghost"
+            size="sm"
             :aria-expanded="isChallengeOpen"
             aria-controls="challenge-submenu"
             aria-label="절약 챌린지 하위 메뉴 열기 및 닫기"
             @click="toggleChallenge"
           >
-            <span
-              class="collapse-mark ms-auto"
-              :class="collapseMarkClass"
+            <i
+              class="bi bi-chevron-down collapse-icon ms-auto"
+              :class="collapseIconClass"
               aria-hidden="true"
-            ></span>
-          </button>
+            ></i>
+          </AppButton>
         </div>
 
         <Transition name="submenu">
           <div v-if="isChallengeOpen" id="challenge-submenu" class="submenu d-flex flex-column">
-            <button
-              type="button"
+            <AppButton
               class="submenu-item submenu-link d-flex align-items-center"
-              :class="challengeFeedClass"
-              :disabled="isChallengeChecking"
-              @click="moveToChallengeFeed"
-            >
-              <span class="submenu-dot" aria-hidden="true"></span>
-              <span>피드 목록</span>
-            </button>
-
-            <button
-              type="button"
-              class="submenu-item submenu-link d-flex align-items-center"
+              variant="ghost"
+              size="sm"
               :class="weeklyRankingClass"
               :disabled="isChallengeChecking"
               @click="moveToWeeklyRanking"
             >
-              <span class="submenu-dot" aria-hidden="true"></span>
-              <span>주간랭킹</span>
-            </button>
+              <template #leading><span class="submenu-dot" aria-hidden="true"></span></template>
+              주간랭킹
+            </AppButton>
 
-            <button
-              type="button"
+            <AppButton
               class="submenu-item submenu-link d-flex align-items-center"
+              variant="ghost"
+              size="sm"
               :class="myChallengeClass"
               :disabled="isChallengeChecking"
               @click="moveToMyChallenge"
             >
-              <span class="submenu-dot" aria-hidden="true"></span>
-              <span>내 챌린지</span>
-            </button>
+              <template #leading><span class="submenu-dot" aria-hidden="true"></span></template>
+              내 챌린지
+            </AppButton>
+
+            <AppButton
+              class="submenu-item submenu-link d-flex align-items-center"
+              variant="ghost"
+              size="sm"
+              :class="myFeedsClass"
+              :disabled="isChallengeChecking"
+              @click="moveToMyFeeds"
+            >
+              <template #leading><span class="submenu-dot" aria-hidden="true"></span></template>
+              내 게시물
+            </AppButton>
           </div>
         </Transition>
       </div>
@@ -290,17 +466,50 @@ const moveToMyChallenge = () => {
           :to="menu.to"
           class="menu-item menu-link d-flex align-items-center"
         >
-          <span class="menu-icon" aria-hidden="true">{{ menu.icon }}</span>
+          <span class="menu-icon" aria-hidden="true">
+            <i :class="menu.icon"></i>
+          </span>
           <span>{{ menu.label }}</span>
         </RouterLink>
       </div>
     </nav>
 
-    <div class="sidebar-card mt-auto text-center">
-      <img :src="thinkingPenguin" class="sidebar-card-image" alt="생각하는 왈로 캐릭터" />
-      <p class="sidebar-card-text mb-0" :title="dailySavingsTip" aria-live="polite">
-        {{ dailySavingsTip }}
-      </p>
+    <div class="sidebar-footer mt-auto">
+      <div class="sidebar-footer-divider" aria-hidden="true"></div>
+
+      <RouterLink
+        to="/users/profile"
+        class="menu-item menu-link d-flex align-items-center"
+      >
+        <span class="menu-icon" aria-hidden="true"><i class="bi bi-gear"></i></span>
+        <span>설정</span>
+      </RouterLink>
+
+      <AppButton
+        class="sidebar-logout menu-item d-flex align-items-center"
+        variant="ghost"
+        size="sm"
+        aria-label="로그아웃"
+        @click="handleLogout"
+      >
+        <template #leading>
+          <span class="menu-icon" aria-hidden="true"><i class="bi bi-box-arrow-right"></i></span>
+        </template>
+        로그아웃
+      </AppButton>
+
+      <div class="sidebar-card text-center">
+        <div class="sidebar-card-image-frame">
+          <img
+            :src="sidebarIllustration"
+            class="sidebar-card-image"
+            alt="Wallo 서핑 일러스트"
+          />
+        </div>
+        <p class="sidebar-card-text mb-0" :title="dailySavingsTip" aria-live="polite">
+          {{ dailySavingsTip }}
+        </p>
+      </div>
     </div>
   </aside>
   <AppDialog
@@ -318,41 +527,42 @@ const moveToMyChallenge = () => {
   top: 0;
   bottom: 0;
   left: 0;
-  flex: 0 0 273px;
-  width: 273px;
+  flex: 0 0 var(--wallo-sidebar-width);
+  width: var(--wallo-sidebar-width);
   height: 100vh;
   padding: 20px 25px 30px;
-  overflow-y: auto;
+  overflow: hidden;
   color: #59647f;
   background: #ffffff;
   border-right: 1px solid #f4f5fa;
 }
 
 .brand {
-  gap: 19px;
   color: inherit;
   text-decoration: none;
 }
 
-.brand-icon {
-  display: block;
-  width: 37px;
-  height: 40px;
-  object-fit: contain;
-}
-
 .brand-name {
   color: #1e2941;
-  font-size: 29px;
+  font-size: 32px;
   font-weight: 800;
   letter-spacing: -1.5px;
 }
 
 .sidebar-nav {
+  flex: 1 1 auto;
+  min-height: 0;
   margin-top: 48px;
-  font-size: 19px;
+  overflow-y: auto;
+  font-size: 17.5px;
   font-weight: 600;
   letter-spacing: -0.6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .menu-group {
@@ -376,7 +586,11 @@ const moveToMyChallenge = () => {
 .menu-link:hover,
 .menu-link.router-link-active,
 .menu-link.router-link-exact-active {
-  color: #7062de;
+  color: #4f8fe8;
+}
+
+.sidebar :deep(.app-button--ghost:hover:not(:disabled)) {
+  background-color: transparent;
 }
 
 .menu-icon {
@@ -388,15 +602,58 @@ const moveToMyChallenge = () => {
   line-height: 1;
 }
 
+.asset-heading {
+  min-height: 26px;
+}
+
+.asset-title {
+  min-height: 26px;
+}
+
+.asset-title:hover,
+.asset-group-active .asset-title {
+  color: #3e7bd1;
+  font-weight: 700;
+}
+
+.asset-title:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid #4f8fe8;
+  outline-offset: 4px;
+}
+
+.ai-heading {
+  min-height: 26px;
+}
+
+.ai-title {
+  min-height: 26px;
+}
+
+.ai-title:hover,
+.ai-group-active .ai-title {
+  color: #3e7bd1;
+  font-weight: 700;
+}
+
+.ai-title:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid #4f8fe8;
+  outline-offset: 4px;
+}
+
 .challenge-group {
   margin-top: 20px;
 }
 
 .challenge-title {
+  justify-content: flex-start;
+  min-height: 26px;
   padding: 0;
   border: 0;
   color: inherit;
   background: transparent;
+  font: inherit;
   font-family: inherit;
   font-size: inherit;
   font-weight: 600;
@@ -407,14 +664,14 @@ const moveToMyChallenge = () => {
 
 .challenge-title:hover,
 .challenge-group-active .challenge-title {
-  color: #5f50d2;
+  color: #3e7bd1;
   font-weight: 700;
 }
 
 .challenge-title:focus-visible,
 .collapse-toggle:focus-visible {
   border-radius: 4px;
-  outline: 2px solid #7062de;
+  outline: 2px solid #4f8fe8;
   outline-offset: 4px;
 }
 
@@ -428,18 +685,23 @@ const moveToMyChallenge = () => {
   cursor: pointer;
 }
 
-.collapse-mark {
-  width: 11px;
-  height: 11px;
+.collapse-toggle.app-button {
+  min-height: 32px;
+  padding: 0;
+}
+
+.collapse-icon {
+  display: inline-block;
   margin-right: 3px;
-  border-right: 2px solid #8f96ba;
-  border-bottom: 2px solid #8f96ba;
-  transform: rotate(45deg) translate(-2px, -2px);
+  color: #8f96ba;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
   transition: transform 0.2s ease;
 }
 
-.collapse-mark-open {
-  transform: rotate(225deg) translate(-2px, -2px);
+.collapse-icon-open {
+  transform: rotate(180deg);
 }
 
 .submenu {
@@ -451,7 +713,19 @@ const moveToMyChallenge = () => {
 .submenu-item {
   gap: 18px;
   min-height: 28px;
-  font-size: 14.6px;
+  font-size: 14px;
+}
+
+.submenu-item.app-button {
+  justify-content: flex-start;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+}
+
+.submenu-item :deep(.app-button__label) {
+  display: inline-flex;
+  align-items: center;
 }
 
 .submenu-link {
@@ -472,7 +746,7 @@ const moveToMyChallenge = () => {
 .submenu-link:hover,
 .submenu-link.router-link-exact-active,
 .submenu-link-active {
-  color: #7062de;
+  color: #4f8fe8;
 }
 
 .submenu-link:disabled {
@@ -510,7 +784,7 @@ const moveToMyChallenge = () => {
 
 .submenu-enter-to,
 .submenu-leave-from {
-  max-height: 110px;
+  max-height: 160px;
   margin-top: 8px;
   opacity: 1;
 }
@@ -520,20 +794,59 @@ const moveToMyChallenge = () => {
   margin-top: 20px;
 }
 
+.sidebar-footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 20px;
+  font-size: 17.5px;
+}
+
+.sidebar-footer-divider {
+  width: 100%;
+  height: 1px;
+  background: #e4e7f0;
+}
+
+.sidebar-logout.app-button {
+  justify-content: flex-start;
+  gap: 0;
+  min-height: 26px;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.sidebar-logout.app-button:hover:not(:disabled) {
+  color: #4d82d6;
+  background: transparent;
+}
+
+.sidebar-logout :deep(.menu-icon) {
+  color: #e35d6a;
+}
+
 .sidebar-card {
   width: 100%;
   padding: 14px 12px 12px;
-  border: 1px solid #e4e7f0;
-  border-radius: 10px;
-  background: #ffffff;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar-card-image-frame {
+  width: 109px;
+  margin: 0 auto 8px;
 }
 
 .sidebar-card-image {
   display: block;
-  width: 128px;
+  width: 109px;
   max-width: 100%;
   height: auto;
-  margin: 0 auto 8px;
 }
 
 .sidebar-card-text {
@@ -545,8 +858,8 @@ const moveToMyChallenge = () => {
 
 @media (max-width: 767.98px) {
   .sidebar {
-    flex-basis: 273px;
-    width: 273px;
+    flex-basis: var(--wallo-sidebar-width);
+    width: var(--wallo-sidebar-width);
   }
 }
 </style>

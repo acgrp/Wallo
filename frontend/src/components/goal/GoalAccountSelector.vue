@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch } from "vue";
-import { formatWon } from "@/commonUtils/formatters";
+import { formatWon } from "@/utils/formatters";
 
 const props = defineProps({
   accounts: {
@@ -87,7 +87,7 @@ const submitAccountSelection = () => {
           <span>{{ error }}</span>
           <button
             type="button"
-            class="btn btn-sm btn-outline-danger text-nowrap"
+            class="btn btn-sm btn-outline-danger text-nowrap pressable"
             @click="emit('retry')"
           >
             다시 시도
@@ -134,7 +134,7 @@ const submitAccountSelection = () => {
 
         <button
           type="button"
-          class="btn btn-primary w-100 mt-3"
+          class="btn btn-primary w-100 mt-3 pressable"
           :disabled="!accountSelectionChanged || saving"
           @click="submitAccountSelection"
         >
@@ -188,14 +188,14 @@ const submitAccountSelection = () => {
 }
 
 .goal-account-option:hover {
-  border-color: #aaa4ee;
-  background: #fafaff;
+  border-color: color-mix(in srgb, var(--wallo-color-primary) 45%, var(--wallo-color-border));
+  background: var(--wallo-color-info-bg);
 }
 
 .goal-account-option-selected {
-  border-color: #6559e8;
-  background: #f7f6ff;
-  box-shadow: 0 0 0 2px rgb(101 89 232 / 10%);
+  border-color: #4f86d8;
+  background: #f5faff;
+  box-shadow: 0 0 0 2px rgb(79 143 232 / 10%);
 }
 
 .goal-account-content {
@@ -204,7 +204,7 @@ const submitAccountSelection = () => {
 }
 
 .goal-account-type {
-  color: #6559e8;
+  color: #4f86d8;
   font-size: 0.75rem;
   font-weight: 700;
 }

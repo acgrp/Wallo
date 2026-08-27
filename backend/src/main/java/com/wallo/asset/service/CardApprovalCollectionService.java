@@ -35,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class CardApprovalCollectionService {
 
     private static final String SOURCE_TYPE = AssetTransactionConstants.CARD_APPROVAL_SOURCE_TYPE;
+    private static final int MAX_APPROVAL_QUERY_MONTHS = 3;
     private static final Logger LOGGER = Logger.getLogger(CardApprovalCollectionService.class.getName());
 
     private final CardApprovalClient cardApprovalClient;
@@ -71,7 +72,7 @@ public class CardApprovalCollectionService {
 
     public int collectInitial(long userId, long connectionId, Institution institution) {
         LocalDate endDate = LocalDate.now(clock);
-        return collect(userId, connectionId, institution, endDate.minusMonths(3), endDate);
+        return collect(userId, connectionId, institution, endDate.withDayOfYear(1), endDate);
     }
 
     public int collect(
@@ -92,6 +93,27 @@ public class CardApprovalCollectionService {
             LocalDate endDate
     ) {
         validateCollectionRequest(institution, startDate, endDate);
+
+        AssetSyncDto.SyncStats totalStats = AssetSyncDto.SyncStats.empty();
+        for (ApprovalCollectionWindow window : splitCollectionRange(startDate, endDate)) {
+            totalStats = totalStats.plus(collectWindowWithStats(
+                    userId,
+                    connectionId,
+                    institution,
+                    window.startDate(),
+                    window.endDate()
+            ));
+        }
+        return totalStats;
+    }
+
+    private AssetSyncDto.SyncStats collectWindowWithStats(
+            long userId,
+            long connectionId,
+            Institution institution,
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
 
         long startedAt = System.nanoTime();
         long apiStartedAt = System.nanoTime();
@@ -130,6 +152,7 @@ public class CardApprovalCollectionService {
         int updatedCount = 0;
         int reusedClassificationCount = 0;
         int aiRequestCount = 0;
+        int fallbackCount = 0;
         long classificationStartedAt = System.nanoTime();
         List<PreparedApproval> preparedApprovals = safeList(activeCardApprovals).stream()
                 .map(approval -> prepareApproval(userId, connectionId, institution, approval))
@@ -171,6 +194,10 @@ public class CardApprovalCollectionService {
                     .equals(mapping.transaction().getCategorySource())) {
                 aiRequestCount++;
             }
+            if (AssetTransactionConstants.FALLBACK_CATEGORY_SOURCE
+                    .equals(mapping.transaction().getCategorySource())) {
+                fallbackCount++;
+            }
             savedCount++;
         }
         if (savedCount > 0) {
@@ -194,7 +221,26 @@ public class CardApprovalCollectionService {
                 processingElapsedMs,
                 elapsedMillis(startedAt)
         ));
-        return new AssetSyncDto.SyncStats(insertedCount, updatedCount);
+        return new AssetSyncDto.SyncStats(insertedCount, updatedCount, fallbackCount);
+    }
+
+    private List<ApprovalCollectionWindow> splitCollectionRange(
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
+        List<ApprovalCollectionWindow> windows = new ArrayList<>();
+        LocalDate windowStart = startDate;
+        while (!windowStart.isAfter(endDate)) {
+            LocalDate windowEnd = windowStart
+                    .plusMonths(MAX_APPROVAL_QUERY_MONTHS)
+                    .minusDays(1);
+            if (windowEnd.isAfter(endDate)) {
+                windowEnd = endDate;
+            }
+            windows.add(new ApprovalCollectionWindow(windowStart, windowEnd));
+            windowStart = windowEnd.plusDays(1);
+        }
+        return windows;
     }
 
     private List<CodefDto.CardApproval> filterActiveCardApprovals(
@@ -451,6 +497,12 @@ public class CardApprovalCollectionService {
     private record TransactionMapping(
             AssetSyncDto.Transaction transaction,
             boolean reusedClassification
+    ) {
+    }
+
+    private record ApprovalCollectionWindow(
+            LocalDate startDate,
+            LocalDate endDate
     ) {
     }
 

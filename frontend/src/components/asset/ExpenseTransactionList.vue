@@ -1,6 +1,6 @@
 <script setup>
 import { getExpenseCategoryMeta } from "@/features/financial/financialCategories";
-import { formatNumber } from "@/commonUtils/formatters";
+import { formatNumber } from "@/utils/formatters";
 
 const props = defineProps({
   transactions: {
@@ -73,16 +73,28 @@ const displayMerchantName = (merchantName) => {
 
 const formatAmount = (transaction) => {
   const amount = formatNumber(transaction.amount);
-  if (transaction.type === "INCOME") return `+${amount}원`;
-  if (transaction.type === "EXPENSE" || transaction.type === "TRANSFER") return `-${amount}원`;
+  const isIncomingTransfer = transaction.type === "TRANSFER" && transaction.category === "RECEIVE";
+  const isOutgoingTransfer = transaction.type === "TRANSFER" && transaction.category === "SEND";
+
+  if (transaction.type === "INCOME" || isIncomingTransfer) {
+    return `+${amount}원`;
+  }
+  if (transaction.type === "EXPENSE" || isOutgoingTransfer) {
+    return `-${amount}원`;
+  }
   return `${amount}원`;
 };
 
-const typeLabel = (type) => ({
-  EXPENSE: "지출",
-  INCOME: "입금",
-  TRANSFER: "출금 이체",
-}[type] ?? type);
+const typeLabel = (transaction) => {
+  if (transaction.type === "TRANSFER") {
+    return transaction.category === "RECEIVE" ? "받은 돈" : "보낸 돈";
+  }
+
+  return {
+    EXPENSE: "지출",
+    INCOME: "입금",
+  }[transaction.type] ?? transaction.type;
+};
 </script>
 
 <template>
@@ -92,7 +104,7 @@ const typeLabel = (type) => ({
         <button
           v-if="props.editable && transaction.transactionId"
           type="button"
-          class="transaction-icon transaction-icon-button"
+          class="transaction-icon transaction-icon-button pressable"
           :class="getExpenseCategoryMeta(transaction.category).colorClass"
           data-testid="transaction-category-button"
           aria-label="카테고리 수정"
@@ -112,7 +124,7 @@ const typeLabel = (type) => ({
           <strong>{{ displayMerchantName(transaction.merchantName) }}</strong>
           <small>
             {{ formatDate(transaction.date) }} · {{ getExpenseCategoryMeta(transaction.category).label }} ·
-            {{ typeLabel(transaction.type) }}
+            {{ typeLabel(transaction) }}
           </small>
         </span>
         <div class="transaction-actions">
@@ -135,7 +147,7 @@ const typeLabel = (type) => ({
     <div v-if="hasNext" class="text-center mt-4">
       <button
         type="button"
-        class="btn load-more-button"
+        class="btn load-more-button pressable"
         :disabled="isLoadingMore"
         @click="$emit('load-more')"
       >
@@ -186,15 +198,19 @@ const typeLabel = (type) => ({
   box-shadow: 0 0 0 3px rgba(129, 112, 255, 0.16);
 }
 
+.transaction-icon-button:active:not(:disabled) {
+  transform: translateY(-1px) scale(0.98);
+}
+
 .transaction-icon-button:focus-visible {
-  outline: 2px solid #6b5bd2;
+  outline: 2px solid #4d82d6;
   outline-offset: 2px;
 }
 
 .transaction-icon.coral { color: #ff796f; background: #fff0ed; }
 .transaction-icon.green { color: #28b98a; background: #eafaf4; }
 .transaction-icon.blue { color: #4f73e8; background: #edf2ff; }
-.transaction-icon.purple { color: #8170ff; background: #f0edff; }
+.transaction-icon.purple { color: #6b9be3; background: #edf6ff; }
 .transaction-icon.gray { color: #7c8294; background: #f1f3f6; }
 
 .transaction-info {
@@ -242,9 +258,9 @@ const typeLabel = (type) => ({
 
 .load-more-button {
   min-width: 150px;
-  border: 1px solid #8170ff;
+  border: 1px solid #6b9be3;
   border-radius: 12px;
-  color: #6b5bd2;
+  color: #4d82d6;
   background: #ffffff;
   font-weight: 700;
 }
@@ -252,7 +268,7 @@ const typeLabel = (type) => ({
 .load-more-button:hover:not(:disabled),
 .load-more-button:focus:not(:disabled) {
   color: #ffffff;
-  background: #8170ff;
+  background: #6b9be3;
 }
 
 @media (max-width: 575.98px) {

@@ -1,5 +1,6 @@
 package com.wallo.asset.dto;
 
+import java.util.Arrays;
 import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -46,6 +47,17 @@ public final class ExpenseDto {
             this.size = size;
             this.category = category;
             this.offset = offset;
+        }
+
+        public List<String> getCategories() {
+            if (category == null || category.isBlank()) {
+                return List.of();
+            }
+
+            return Arrays.stream(category.split(","))
+                    .map(String::trim)
+                    .filter(value -> !value.isEmpty())
+                    .toList();
         }
     }
 
@@ -114,6 +126,15 @@ public final class ExpenseDto {
         private String category;
         private long amount;
         private String merchantName;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class MonthlyCashflow {
+        private long monthlyIncome;
+        private long monthlyExpense;
     }
 
     @Getter

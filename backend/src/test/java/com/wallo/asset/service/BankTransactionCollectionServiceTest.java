@@ -78,10 +78,11 @@ class BankTransactionCollectionServiceTest {
     }
 
     @Test
-    void collectsIncomeAndOutgoingTransferTransactions() {
+    void collectsIncomeAndIncomingAndOutgoingTransferTransactions() {
         when(bankTransactionClient.getTransactions(any())).thenReturn(CodefDto.Response.success(List.of(
                 transaction("BANK-1", "3000000", "0", "월급_7월", "INCOME"),
-                transaction("BANK-2", "0", "50000", "김철수", "TRANSFER")
+                transaction("BANK-2", "50000", "0", "김철수", "TRANSFER"),
+                transaction("BANK-3", "0", "50000", "이체", "TRANSFER")
         )));
 
         int collectedCount = service.collect(
@@ -93,7 +94,7 @@ class BankTransactionCollectionServiceTest {
                 LocalDate.of(2026, 7, 31)
         );
 
-        assertEquals(2, collectedCount);
+        assertEquals(3, collectedCount);
 
         ArgumentCaptor<CodefDto.BankTransactionRequest> requestCaptor =
                 ArgumentCaptor.forClass(CodefDto.BankTransactionRequest.class);
@@ -107,7 +108,7 @@ class BankTransactionCollectionServiceTest {
 
         ArgumentCaptor<AssetSyncDto.Transaction> transactionCaptor =
                 ArgumentCaptor.forClass(AssetSyncDto.Transaction.class);
-        verify(assetSyncMapper, org.mockito.Mockito.times(2))
+        verify(assetSyncMapper, org.mockito.Mockito.times(3))
                 .upsertTransaction(transactionCaptor.capture());
         List<AssetSyncDto.Transaction> savedTransactions = transactionCaptor.getAllValues();
 
@@ -115,13 +116,71 @@ class BankTransactionCollectionServiceTest {
         assertEquals("INCOME", savedTransactions.get(0).getCategory());
         assertEquals(3_000_000L, savedTransactions.get(0).getAmount());
         assertEquals("TRANSFER", savedTransactions.get(1).getType());
-        assertEquals("SEND", savedTransactions.get(1).getCategory());
+        assertEquals("RECEIVE", savedTransactions.get(1).getCategory());
         assertEquals(50_000L, savedTransactions.get(1).getAmount());
-        assertEquals("BANK_TRANSACTION", savedTransactions.get(1).getSourceType());
+        assertEquals("BANK_DIRECTION", savedTransactions.get(1).getCategorySource());
         assertEquals("BANK-2", savedTransactions.get(1).getSourceTransactionId());
         assertNull(savedTransactions.get(1).getApprovalNo());
         assertEquals(64, savedTransactions.get(1).getSourceDedupKey().length());
+        assertEquals("TRANSFER", savedTransactions.get(2).getType());
+        assertEquals("SEND", savedTransactions.get(2).getCategory());
+        assertEquals(50_000L, savedTransactions.get(2).getAmount());
+        assertEquals("BANK_TRANSACTION", savedTransactions.get(2).getSourceType());
+        assertEquals("BANK-3", savedTransactions.get(2).getSourceTransactionId());
         verify(categoryClassifier, never()).classify(any());
+        verify(categoryClassifier, never()).classifyBatch(any());
+    }
+
+    @Test
+    void classifiesKnownExpenseTransfersAsExpenses() {
+        when(categoryClassifier.classifyBeforeAi(any())).thenAnswer(invocation -> {
+            ExpenseCategoryClassifier.Context context = invocation.getArgument(0);
+            return switch (context.merchantName()) {
+                case "보험료" -> Optional.of(new ExpenseCategoryClassifier.Result(
+                        "LIVING",
+                        "MERCHANT_KEYWORD",
+                        new BigDecimal("0.9800"),
+                        "keyword-v1"
+                ));
+                case "관리비", "월세" -> Optional.of(new ExpenseCategoryClassifier.Result(
+                        "HOUSING",
+                        "MERCHANT_KEYWORD",
+                        new BigDecimal("0.9800"),
+                        "keyword-v1"
+                ));
+                default -> Optional.empty();
+            };
+        });
+        when(bankTransactionClient.getTransactions(any())).thenReturn(CodefDto.Response.success(List.of(
+                transaction("BANK-INSURANCE", "0", "80000", "보험료", "TRANSFER"),
+                transaction("BANK-MANAGEMENT", "0", "120000", "관리비", "TRANSFER"),
+                transaction("BANK-RENT", "0", "850000", "월세", "TRANSFER"),
+                transaction("BANK-SEND", "0", "100000", "부모님 용돈", "TRANSFER")
+        )));
+
+        service.collect(
+                7L,
+                31L,
+                "123456-01-789012",
+                institution,
+                LocalDate.of(2026, 8, 1),
+                LocalDate.of(2026, 8, 5)
+        );
+
+        ArgumentCaptor<AssetSyncDto.Transaction> transactionCaptor =
+                ArgumentCaptor.forClass(AssetSyncDto.Transaction.class);
+        verify(assetSyncMapper, org.mockito.Mockito.times(4))
+                .upsertTransaction(transactionCaptor.capture());
+        List<AssetSyncDto.Transaction> savedTransactions = transactionCaptor.getAllValues();
+
+        assertEquals("EXPENSE", savedTransactions.get(0).getType());
+        assertEquals("LIVING", savedTransactions.get(0).getCategory());
+        assertEquals("EXPENSE", savedTransactions.get(1).getType());
+        assertEquals("HOUSING", savedTransactions.get(1).getCategory());
+        assertEquals("EXPENSE", savedTransactions.get(2).getType());
+        assertEquals("HOUSING", savedTransactions.get(2).getCategory());
+        assertEquals("TRANSFER", savedTransactions.get(3).getType());
+        assertEquals("SEND", savedTransactions.get(3).getCategory());
     }
 
     @Test

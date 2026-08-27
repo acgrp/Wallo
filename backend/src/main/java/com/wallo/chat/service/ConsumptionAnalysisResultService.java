@@ -8,9 +8,6 @@ import com.wallo.chat.mapper.ConsumptionAnalysisResultMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.time.Clock;
-import java.time.LocalDateTime;
-import java.util.Optional;
 import com.wallo.chat.dto.ConsumptionAnalysisPeriodContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +18,6 @@ public class ConsumptionAnalysisResultService {
     private final ConsumptionAnalysisResultMapper mapper;
     private final ObjectMapper objectMapper;
     private final ConsumptionAnalysisViewAssembler viewAssembler;
-    private final Clock clock;
 
     @Autowired
     public ConsumptionAnalysisResultService(
@@ -29,42 +25,10 @@ public class ConsumptionAnalysisResultService {
             ObjectMapper objectMapper,
             ConsumptionAnalysisViewAssembler viewAssembler
     ) {
-        this(mapper, objectMapper, viewAssembler, Clock.systemDefaultZone());
-    }
-
-    ConsumptionAnalysisResultService(
-            ConsumptionAnalysisResultMapper mapper,
-            ObjectMapper objectMapper,
-            ConsumptionAnalysisViewAssembler viewAssembler,
-            Clock clock
-    ) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
         this.viewAssembler = viewAssembler;
-        this.clock = clock;
     }
-
-    @Transactional(readOnly = true)
-    public Optional<CachedAnalysis> findReusable(long userId) {
-        ConsumptionAnalysisResultDto.RecentResult stored = mapper.findLatestSince(
-                userId, LocalDateTime.now(clock).minusDays(7));
-        if (stored == null) return Optional.empty();
-        try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> calculation = objectMapper.readValue(
-                    stored.getCalculatedResultJson(), Map.class);
-            return Optional.of(new CachedAnalysis(
-                    stored.getAnalysisResultId(), calculation, stored.getAiResponse()));
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("저장된 소비분석 결과를 읽지 못했습니다.", exception);
-        }
-    }
-
-    public record CachedAnalysis(
-            long analysisResultId,
-            Map<String, Object> calculatedResult,
-            String aiResponse
-    ) {}
 
     @Transactional
     public boolean save(
@@ -138,5 +102,31 @@ public class ConsumptionAnalysisResultService {
             }
         }
         return null;
+    }
+
+    @Transactional(readOnly = true)
+    public ConsumptionAnalysisResultDto.LatestResponse findLatestByUserId(long userId) {
+        ConsumptionAnalysisResultDto.LatestStoredResult stored = mapper.findLatestByUserId(userId);
+        if (stored == null) {
+            return null;
+        }
+        return new ConsumptionAnalysisResultDto.LatestResponse(
+                stored.getAssistantMessageId(),
+                stored.getRequestMessage(),
+                parseAnalysis(stored.getCalculatedResultJson()),
+                stored.getAiResponse(),
+                stored.getGeneratedAt()
+        );
+    }
+
+    private ConsumptionAnalysisView parseAnalysis(String calculatedResultJson) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> calculation = objectMapper.readValue(
+                    calculatedResultJson, Map.class);
+            return viewAssembler.assemble(calculation);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("저장된 소비분석 결과를 읽지 못했습니다.", exception);
+        }
     }
 }

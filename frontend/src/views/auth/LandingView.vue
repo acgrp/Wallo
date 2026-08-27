@@ -66,7 +66,7 @@ onUnmounted(() => {
       </div>
 
       <div class="landing-copy">
-        <h1 id="landing-title"><span>왈로</span> 페이지 불러오는 중이에요</h1>
+        <h1 id="landing-title"><span>왈로</span>를 불러오는 중이에요</h1>
         <p>잠시만 기다려주세요.</p>
       </div>
 
@@ -199,7 +199,7 @@ onUnmounted(() => {
 }
 
 .landing-dot-active {
-  background: #6859e8;
+  background: #5f93dd;
   box-shadow: 0 0 0 3px rgba(104, 89, 232, 0.1);
   opacity: 1;
   transform: scale(1.18);

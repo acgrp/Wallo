@@ -148,6 +148,7 @@ public class BankTransactionCollectionService {
         int updatedCount = 0;
         int reusedClassificationCount = 0;
         int aiRequestCount = 0;
+        int fallbackCount = 0;
         long classificationStartedAt = System.nanoTime();
         List<PreparedBankTransaction> preparedTransactions = safeList(transactions).stream()
                 .map(source -> prepareTransaction(
@@ -194,6 +195,10 @@ public class BankTransactionCollectionService {
                     .equals(mapping.transaction().getCategorySource())) {
                 aiRequestCount++;
             }
+            if (AssetTransactionConstants.FALLBACK_CATEGORY_SOURCE
+                    .equals(mapping.transaction().getCategorySource())) {
+                fallbackCount++;
+            }
             savedCount++;
         }
         if (savedCount > 0) {
@@ -217,7 +222,7 @@ public class BankTransactionCollectionService {
                 processingElapsedMs,
                 elapsedMillis(startedAt)
         ));
-        return new AssetSyncDto.SyncStats(insertedCount, updatedCount);
+        return new AssetSyncDto.SyncStats(insertedCount, updatedCount, fallbackCount);
     }
 
     private void invalidateConsumptionInsightCache(
@@ -269,7 +274,7 @@ public class BankTransactionCollectionService {
                 : null;
         TransactionClassification directionClassification = cardPayment
                 ? validateCardPayment(accountIn, accountOut)
-                : classifyDirectionTransaction(normalizedKind, accountIn, accountOut);
+                : classifyDirectionTransaction(normalizedKind, accountIn, accountOut, description);
         return new PreparedBankTransaction(
                 userId,
                 accountId,
@@ -327,7 +332,8 @@ public class BankTransactionCollectionService {
     private TransactionClassification classifyDirectionTransaction(
             String transactionKind,
             long accountIn,
-            long accountOut
+            long accountOut,
+            String description
     ) {
         String normalizedKind = transactionKind == null
                 ? ""
@@ -338,7 +344,8 @@ public class BankTransactionCollectionService {
 
         return switch (normalizedKind) {
             case AssetTransactionConstants.INCOME_TYPE -> classifyIncome(accountIn, accountOut);
-            case AssetTransactionConstants.TRANSFER_TYPE -> classifyTransfer(accountIn, accountOut);
+            case AssetTransactionConstants.TRANSFER_TYPE ->
+                    classifyTransferOrExpense(description, accountIn, accountOut);
             default -> throw new IllegalArgumentException(
                     "지원하지 않는 은행 거래 유형입니다: " + transactionKind
             );
@@ -354,9 +361,36 @@ public class BankTransactionCollectionService {
             return incomeClassification(accountIn, fallback);
         }
         if (accountOut > 0 && accountIn == 0) {
-            return transferClassification(accountOut, fallback);
+            return sendClassification(accountOut, fallback);
         }
         throw new IllegalArgumentException("입금액과 출금액 중 하나만 양수여야 합니다.");
+    }
+
+    private TransactionClassification classifyTransferOrExpense(
+            String description,
+            long accountIn,
+            long accountOut
+    ) {
+        if (accountOut > 0 && accountIn == 0) {
+            Optional<ExpenseCategoryClassifier.Result> expenseCategory =
+                    categoryClassifier.classifyBeforeAi(
+                            new ExpenseCategoryClassifier.Context(description, null, accountOut)
+                    );
+            if (expenseCategory.isPresent()) {
+                ExpenseCategoryClassifier.Result result = expenseCategory.get();
+                return new TransactionClassification(
+                        AssetTransactionConstants.EXPENSE_TYPE,
+                        result.category(),
+                        accountOut,
+                        result.source(),
+                        result.confidence(),
+                        result.classifierVersion(),
+                        false
+                );
+            }
+        }
+
+        return classifyTransfer(accountIn, accountOut);
     }
 
     private TransactionClassification classifyIncome(long accountIn, long accountOut) {
@@ -367,10 +401,13 @@ public class BankTransactionCollectionService {
     }
 
     private TransactionClassification classifyTransfer(long accountIn, long accountOut) {
-        if (accountOut <= 0 || accountIn != 0) {
-            throw new IllegalArgumentException("이체 거래의 금액 방향이 올바르지 않습니다.");
+        if (accountIn > 0 && accountOut == 0) {
+            return receiveClassification(accountIn, false);
         }
-        return transferClassification(accountOut, false);
+        if (accountOut > 0 && accountIn == 0) {
+            return sendClassification(accountOut, false);
+        }
+        throw new IllegalArgumentException("이체 거래의 금액 방향이 올바르지 않습니다.");
     }
 
     private TransactionClassification validateCardPayment(
@@ -450,7 +487,9 @@ public class BankTransactionCollectionService {
             }
         }
 
-        List<ExpenseCategoryClassifier.Result> classified = categoryClassifier.classifyBatch(pendingContexts);
+        List<ExpenseCategoryClassifier.Result> classified = pendingContexts.isEmpty()
+                ? List.of()
+                : categoryClassifier.classifyBatch(pendingContexts);
         for (PreparedBankTransaction transaction : transactions) {
             if (resolutions.containsKey(transaction.sourceIdentity().sourceDedupKey())) {
                 continue;
@@ -489,7 +528,23 @@ public class BankTransactionCollectionService {
         );
     }
 
-    private TransactionClassification transferClassification(long amount, boolean fallback) {
+    private TransactionClassification receiveClassification(long amount, boolean fallback) {
+        return new TransactionClassification(
+                AssetTransactionConstants.TRANSFER_TYPE,
+                AssetTransactionConstants.RECEIVE_CATEGORY,
+                amount,
+                fallback
+                        ? AssetTransactionConstants.BANK_DIRECTION_FALLBACK_SOURCE
+                        : AssetTransactionConstants.BANK_DIRECTION_SOURCE,
+                BigDecimal.ONE,
+                fallback
+                        ? AssetTransactionConstants.BANK_DIRECTION_FALLBACK_CLASSIFIER_VERSION
+                        : AssetTransactionConstants.BANK_DIRECTION_CLASSIFIER_VERSION,
+                false
+        );
+    }
+
+    private TransactionClassification sendClassification(long amount, boolean fallback) {
         return new TransactionClassification(
                 AssetTransactionConstants.TRANSFER_TYPE,
                 AssetTransactionConstants.SEND_CATEGORY,

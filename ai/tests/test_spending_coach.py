@@ -1,12 +1,12 @@
 from datetime import date, time
 
-from app.agents.financial.tools.spending_coach import analyze
-from app.agents.financial.spending_intent import (
+from app.financial_assistant.tools.spending_coach import analyze
+from app.financial_assistant.spending_intent import (
     build_spending_arguments,
     is_spending_request,
 )
-from app.agents.financial.agent import FinancialAgent
-from app.agents.financial.consumption_models import ConsumptionBudget, ConsumptionContext, ConsumptionTransaction
+from app.financial_assistant.agent import FinancialAgent
+from app.financial_assistant.consumption_models import ConsumptionBudget, ConsumptionContext, ConsumptionTransaction
 from types import SimpleNamespace
 from unittest.mock import Mock
 import json
@@ -237,7 +237,7 @@ def test_spending_analysis_uses_expanded_final_output_tokens():
     assert agent.selected_tool_result is not None
     assert agent.selected_tool_result["dataSufficiency"]["sufficient"] is False
     assert client.chat.completions.create.call_count == 1
-    assert client.chat.completions.create.call_args.kwargs["max_completion_tokens"] == 1600
+    assert client.chat.completions.create.call_args.kwargs["max_completion_tokens"] == 1000
 
 
 def test_spending_intent_covers_indirect_consumption_questions():

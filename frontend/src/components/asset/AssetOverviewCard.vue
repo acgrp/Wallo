@@ -1,76 +1,74 @@
 <script setup>
-import { computed, ref } from "vue";
-import { Doughnut } from "vue-chartjs";
-import { ArcElement, Chart as ChartJS, Tooltip } from "chart.js";
+import { computed, ref } from "vue"
+import { Doughnut } from "vue-chartjs"
+import { ArcElement, Chart as ChartJS, Tooltip } from "chart.js"
 import {
   ASSET_FALLBACK_COLORS,
   getAssetCategoryMeta,
-} from "@/features/financial/financialCategories";
-import { formatWon } from "@/commonUtils/formatters";
+} from "@/features/financial/financialCategories"
+import { formatWon } from "@/utils/formatters"
+import AppCard from "@/components/ui/AppCard.vue"
+import AppState from "@/components/ui/AppState.vue"
 
-ChartJS.register(ArcElement, Tooltip);
+ChartJS.register(ArcElement, Tooltip)
 
 const props = defineProps({
   assets: {
     type: Object,
     required: true,
   },
-});
+})
 
-const totalAssets = computed(() => Number(props.assets.totalAssets) || 0);
+const totalAssets = computed(() => Number(props.assets.totalAssets) || 0)
 const loanBalance = computed(() =>
   Math.abs(
     (props.assets.assetCategoryBreakdown ?? [])
       .filter((item) => String(item.category || "").toUpperCase() === "LOAN")
       .reduce((sum, item) => sum + (Number(item.amount) || 0), 0),
   ),
-);
-const totalHoldings = computed(() => totalAssets.value + loanBalance.value);
+)
+const totalHoldings = computed(() => totalAssets.value + loanBalance.value)
 
 const categories = computed(() =>
   (props.assets.assetCategoryBreakdown ?? [])
     .map((item, index) => {
-      const category = String(item.category || "ETC").toUpperCase();
-      const amount = Number(item.amount) || 0;
-      const meta = getAssetCategoryMeta(category);
+      const category = String(item.category || "ETC").toUpperCase()
+      const amount = Number(item.amount) || 0
+      const meta = getAssetCategoryMeta(category)
 
       return {
         category,
         label: meta?.label ?? item.category ?? "기타 자산",
         amount,
         color: meta?.color ?? ASSET_FALLBACK_COLORS[index % ASSET_FALLBACK_COLORS.length],
-      };
+      }
     })
     .filter((item) => item.amount > 0)
     .sort((first, second) => second.amount - first.amount),
-);
+)
 
-const categoryTotal = computed(() =>
-  categories.value.reduce((sum, item) => sum + item.amount, 0),
-);
+const categoryTotal = computed(() => categories.value.reduce((sum, item) => sum + item.amount, 0))
 
 const categoryRate = (amount) => {
-  const denominator = totalHoldings.value > 0
-    ? totalHoldings.value
-    : categoryTotal.value;
+  const denominator = totalHoldings.value > 0 ? totalHoldings.value : categoryTotal.value
 
   if (denominator <= 0) {
-    return 0;
+    return 0
   }
 
-  return Math.round((amount / denominator) * 100);
-};
+  return Math.round((amount / denominator) * 100)
+}
 
-const hoveredCategoryIndex = ref(null);
+const hoveredCategoryIndex = ref(null)
 const hoveredCategory = computed(() => {
   if (hoveredCategoryIndex.value === null) {
-    return null;
+    return null
   }
 
-  return categories.value[hoveredCategoryIndex.value] ?? null;
-});
+  return categories.value[hoveredCategoryIndex.value] ?? null
+})
 
-const hasCategoryData = computed(() => categories.value.length > 0);
+const hasCategoryData = computed(() => categories.value.length > 0)
 
 const chartData = computed(() => ({
   labels: categories.value.map((item) => item.label),
@@ -83,14 +81,14 @@ const chartData = computed(() => ({
       hoverOffset: 5,
     },
   ],
-}));
+}))
 
 const chartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   cutout: "70%",
   onHover: (_event, activeElements) => {
-    hoveredCategoryIndex.value = activeElements[0]?.index ?? null;
+    hoveredCategoryIndex.value = activeElements[0]?.index ?? null
   },
   plugins: {
     legend: {
@@ -100,15 +98,15 @@ const chartOptions = {
       enabled: false,
     },
   },
-};
+}
 </script>
 
 <template>
-  <article class="card asset-overview-card border-0 shadow-sm">
-    <div class="card-body asset-overview-body">
+  <AppCard class="asset-overview-card" padding="none">
+    <div class="asset-overview-body">
       <RouterLink
         to="/users/profile/connections"
-        class="btn connection-management-button"
+        class="btn app-action-link connection-management-button pressable"
       >
         연동관리
         <i class="bi bi-gear ms-1" aria-hidden="true"></i>
@@ -118,7 +116,6 @@ const chartOptions = {
         <section class="col-lg-4 asset-summary-panel" aria-label="자산 금액 요약">
           <h2 class="h5 fw-bold mb-3">자산 한눈에 보기</h2>
           <div class="asset-summary-content">
-            <p class="asset-total-label mb-1">총 보유자산</p>
             <strong class="asset-total d-block">{{ formatWon(totalHoldings) }}</strong>
             <div class="asset-balance-summary mt-3">
               <div>
@@ -170,42 +167,56 @@ const chartOptions = {
             </div>
           </div>
 
-          <div v-else class="asset-empty-state text-center text-secondary">
-            <i class="bi bi-pie-chart fs-2" aria-hidden="true"></i>
-            <p class="mb-0 mt-2">
-              자산을 연동하면 카테고리별 금액과 비율을 확인할 수 있습니다.
-            </p>
-          </div>
+          <AppState
+            v-else
+            class="asset-empty-state"
+            type="empty"
+            title="카테고리별 자산 데이터가 없습니다."
+            message="자산을 연동하면 카테고리별 금액과 비율을 확인할 수 있습니다."
+            compact
+          />
         </section>
       </div>
     </div>
-  </article>
+  </AppCard>
 </template>
 
 <style scoped>
 .asset-overview-card {
   width: 100%;
-  border-radius: 32px;
-  background: #ffffff;
+  min-height: var(--asset-overview-card-height, 312px);
+  border-radius: var(--wallo-radius-xl);
 }
 
 .asset-overview-body {
   position: relative;
-  min-height: 310px;
-  padding: 36px 42px;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(var(--asset-overview-card-height, 312px) - 2px);
+  padding: var(--wallo-space-6);
 }
 
 .asset-content-row {
+  flex: 1 1 auto;
   min-height: 238px;
 }
 
 .asset-summary-panel {
-  align-self: flex-start;
+  display: flex;
+  align-self: stretch;
+  flex-direction: column;
+  justify-content: flex-start;
   padding-top: 0;
-  padding-bottom: 12px;
+  padding-bottom: 0;
 }
 
-.asset-summary-content,
+.asset-summary-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  transform: none;
+}
+
 .asset-visual-panel {
   transform: translateY(10px);
 }
@@ -213,37 +224,27 @@ const chartOptions = {
 .connection-management-button {
   position: absolute;
   z-index: 1;
-  top: 36px;
-  right: 42px;
-  border: 1px solid #8170ff;
-  border-radius: 12px;
-  color: #6b5bd2;
-  background: #ffffff;
-  font-weight: 600;
-}
-
-.connection-management-button:hover,
-.connection-management-button:focus {
-  border-color: #8170ff;
-  color: #ffffff;
-  background: #8170ff;
+  top: var(--wallo-space-6);
+  right: var(--wallo-space-6);
 }
 
 .asset-total {
-  color: #000000;
+  color: var(--wallo-color-text);
   font-size: clamp(1.75rem, 3vw, 2.25rem);
+  transform: translateY(10px);
 }
 
 .asset-total-label {
-  color: #6c757d;
+  color: var(--wallo-color-text-muted);
   font-size: 0.95rem;
   font-weight: 600;
 }
 
 .asset-balance-summary {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 10px;
+  margin-top: var(--wallo-space-8) !important;
 }
 
 .asset-balance-summary > div {
@@ -255,19 +256,19 @@ const chartOptions = {
 }
 
 .asset-balance-summary span {
-  color: #70768a;
+  color: var(--wallo-color-text-muted);
   font-size: 0.95rem;
   font-weight: 600;
 }
 
 .asset-balance-summary strong {
-  color: #343044;
+  color: var(--wallo-color-text);
   font-size: 1.05rem;
   white-space: nowrap;
 }
 
 .asset-balance-summary .loan-balance {
-  color: #dc3545;
+  color: var(--wallo-color-danger);
 }
 
 .asset-doughnut-chart {
@@ -279,7 +280,7 @@ const chartOptions = {
   position: absolute;
   top: 50%;
   left: 50%;
-  color: #6c757d;
+  color: var(--wallo-color-text-muted);
   font-size: 0.9rem;
   font-weight: 600;
   line-height: 1.45;
@@ -296,16 +297,16 @@ const chartOptions = {
 }
 
 .asset-doughnut-center strong {
-  color: #343044;
+  color: var(--wallo-color-text);
   font-size: 0.95rem;
 }
 
 .asset-doughnut-center span {
-  color: #6b5bd2;
+  color: var(--wallo-color-primary);
 }
 
 .asset-doughnut-center small {
-  color: #6c757d;
+  color: var(--wallo-color-text-muted);
   font-size: 0.75rem;
 }
 
@@ -317,10 +318,22 @@ const chartOptions = {
 
 .asset-category-list li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px 118px;
+  grid-template-columns: minmax(0, 1fr) var(--wallo-space-6) 50px var(--wallo-space-2) 118px;
   padding-bottom: 10px;
-  border-bottom: 1px solid #edf0f5;
-  color: #111111;
+  border-bottom: 1px solid var(--wallo-color-border-soft);
+  color: var(--wallo-color-text);
+}
+
+.asset-category-label {
+  grid-column: 1;
+}
+
+.asset-category-rate {
+  grid-column: 3;
+}
+
+.asset-category-list strong {
+  grid-column: 5;
 }
 
 .asset-category-list li:last-child {
@@ -342,7 +355,7 @@ const chartOptions = {
 }
 
 .asset-category-rate {
-  color: #6c757d;
+  color: var(--wallo-color-text-muted);
   font-size: 0.9rem;
   text-align: right;
 }
@@ -353,32 +366,31 @@ const chartOptions = {
 }
 
 .asset-empty-state {
-  display: flex;
   min-height: 180px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 @media (max-width: 991.98px) {
   .asset-overview-body {
     min-height: auto;
-    padding: 32px;
+    padding: var(--wallo-space-5);
   }
 
   .asset-summary-panel {
-    padding-bottom: 4px;
+    padding-bottom: 0;
   }
 }
 
 @media (max-width: 575.98px) {
   .asset-overview-body {
-    padding: 26px 22px;
+    padding: var(--wallo-space-5) var(--wallo-space-4);
   }
 
   .connection-management-button {
-    top: 26px;
-    right: 22px;
+    top: var(--wallo-space-5);
+    right: var(--wallo-space-4);
   }
 
   .asset-summary-panel h2 {
@@ -387,6 +399,12 @@ const chartOptions = {
 
   .asset-category-list li {
     grid-template-columns: minmax(0, 1fr) 40px auto;
+  }
+
+  .asset-category-label,
+  .asset-category-rate,
+  .asset-category-list strong {
+    grid-column: auto;
   }
 
   .asset-category-list strong {

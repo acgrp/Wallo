@@ -3,33 +3,95 @@ import { computed, onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 import { storeToRefs } from "pinia"
 import { useGoalStore } from "@/stores/goalStore"
-import { formatWon } from "@/commonUtils/formatters"
+import {
+  MISSION_GENERATION_FAILED_STATUS,
+  MISSION_RATE_LIMIT_MESSAGE,
+  useMissionStore,
+} from "@/stores/missionStore"
+import { useUserStore } from "@/stores/userStore"
+import { formatRoadmapText, formatWon } from "@/utils/formatters"
 import {
   getGoalAchievementRate,
   getGoalCurrentAmount,
   getGoalTargetAmount,
-} from "@/commonUtils/goalProgress"
+} from "@/utils/goalProgress"
+import AppAlert from "@/components/ui/AppAlert.vue"
+import AppButton from "@/components/ui/AppButton.vue"
+import AppCard from "@/components/ui/AppCard.vue"
+import AppPageHeader from "@/components/ui/AppPageHeader.vue"
+import AppState from "@/components/ui/AppState.vue"
+import { announcePointEarned } from "@/utils/pointRewardNotice"
+import { getAppToday } from "@/utils/appDate"
 
 const router = useRouter()
 const goalStore = useGoalStore()
+const missionStore = useMissionStore()
+const userStore = useUserStore()
 const {
   goals,
-  isLoading,
+  initialLoading,
+  refreshing,
   error,
   roadmap,
   isRoadmapLoading,
   roadmapError,
   isRoadmapProgressSaving,
 } = storeToRefs(goalStore)
+const { user } = storeToRefs(userStore)
+const {
+  missions,
+  status: missionStatus,
+  failureReason: missionFailureReason,
+  error: missionError,
+  isLoading: isMissionLoading,
+} = storeToRefs(missionStore)
 
 const walloCharacter = "/images/profiles/thinking-penguin.svg"
+const walloAdviceCharacter = "/images/spending/09_저축중.svg"
 const hasGoal = computed(() => goals.value.length > 0)
 const currentGoal = computed(() => goals.value[0] ?? null)
 const roadmapSlider = ref(null)
+const userId = computed(() => user.value?.id ?? null)
+const missionActionId = ref(null)
 
 const currentAmount = computed(() => getGoalCurrentAmount(currentGoal.value))
 const targetAmount = computed(() => getGoalTargetAmount(currentGoal.value))
 const achievementRate = computed(() => getGoalAchievementRate(currentGoal.value))
+const completedMissionCount = computed(
+  () => missions.value.filter((mission) => mission.completed).length,
+)
+
+const getMissionVerificationInfo = (mission) => {
+  const verificationType = mission?.verificationType
+  const typeGuides = {
+    MEDIA_AI: {
+      label: "사진·영상 AI 인증",
+      guide: mission?.evidenceGuide || "미션 수행 장면을 촬영해 피드에 등록하세요.",
+    },
+    TRANSACTION: {
+      label: "거래 내역 자동 확인",
+      guide: "연결된 거래 내역을 기준으로 달성 여부를 자동 확인합니다.",
+    },
+    HYBRID: {
+      label: "복합 인증",
+      guide: "사진·영상 인증과 거래 내역을 함께 확인해 달성 여부를 판단합니다.",
+    },
+    SELF_CHECK: {
+      label: "직접 완료 체크",
+      guide: "미션을 실천한 뒤 오늘의 미션에서 완료 여부를 직접 체크하세요.",
+    },
+    MANUAL: {
+      label: "수동 확인",
+      guide: "미션 수행 증빙을 제출하면 확인 후 달성 여부가 결정됩니다.",
+    },
+  }
+  return (
+    typeGuides[verificationType] || {
+      label: "달성 방법",
+      guide: mission?.evidenceGuide || "미션 안내에 따라 실천해 주세요.",
+    }
+  )
+}
 
 const parseGoalDate = (value) => {
   if (!value) return null
@@ -50,9 +112,9 @@ const formatGoalDate = (value) => {
 const remainingMonths = computed(() => {
   const targetDate = parseGoalDate(currentGoal.value?.targetDate)
   if (!targetDate) return 0
-  const today = new Date()
-  const months = (targetDate.getFullYear() - today.getFullYear()) * 12
-    + targetDate.getMonth() - today.getMonth()
+  const today = getAppToday()
+  const months =
+    (targetDate.getFullYear() - today.getFullYear()) * 12 + targetDate.getMonth() - today.getMonth()
   return Math.max(0, months)
 })
 
@@ -64,13 +126,14 @@ const goalRoadmapSteps = computed(() => {
   return steps.map((step, index) => ({
     number: step.stepNumber ?? index + 1,
     icon: index === steps.length - 1 ? "bi-flag" : "bi-clipboard-check",
-    title: step.title,
+    title: formatRoadmapText(step.title),
     date: formatGoalDate(step.targetDate),
-    description: step.description,
-    actionItems: step.actionItems ?? [],
+    description: formatRoadmapText(step.description),
+    actionItems: (step.actionItems ?? []).map(formatRoadmapText),
     completed: completedSteps.has(step.stepNumber ?? index + 1),
-    active: !completedSteps.has(step.stepNumber ?? index + 1)
-      && (step.stepNumber ?? index + 1) === currentStepNumber,
+    active:
+      !completedSteps.has(step.stepNumber ?? index + 1) &&
+      (step.stepNumber ?? index + 1) === currentStepNumber,
   }))
 })
 
@@ -137,55 +200,130 @@ const benefits = [
   },
 ]
 
-const loadGoalPage = async () => {
+const loadGoalPage = async ({ force = false } = {}) => {
+  error.value = null
   await goalStore.fetchGoals({
+    userId: userId.value,
     notifyError: false,
+    force,
   })
 }
 
+const loadTodayMissionList = async () => {
+  try {
+    const { verificationResults } = await missionStore.refreshTodayMissions({
+      verifyTransactions: true,
+    })
+    verificationResults.forEach((result) => {
+      const rewardedPoint = Number(result.status === "fulfilled" ? result.value?.rewardedPoint : 0)
+      if (result.status === "fulfilled" && result.value?.decision === "PASS" && rewardedPoint > 0) {
+        announcePointEarned(rewardedPoint)
+      }
+    })
+  } catch (missionLoadError) {
+    if (!missions.value.length) {
+      missionError.value = missionLoadError.message || "오늘의 미션을 불러오지 못했습니다."
+    }
+  }
+}
+
 const startGoalSetting = async () => {
+  await router.push({
+    name: "chat",
+    query: { start: "goal-setting" },
+  })
+}
+
+const startAiChat = async () => {
   await router.push({ name: "chat" })
 }
 
-onMounted(loadGoalPage)
+const startConsumptionAnalysis = async () => {
+  await router.push({
+    name: "chat",
+    query: { action: "consumption-analysis" },
+  })
+}
+
+const runMissionAction = async (mission) => {
+  if (mission.completed || missionActionId.value) return
+  if (mission.verificationType !== "SELF_CHECK") return
+  missionActionId.value = mission.id
+  try {
+    const response = await missionStore.completeSelfCheckMission(mission.id)
+    const rewardedPoint = Number(response?.rewardedPoint || 0)
+    if (response?.decision === "PASS" && rewardedPoint > 0) {
+      announcePointEarned(rewardedPoint)
+    }
+  } catch (missionActionError) {
+    alert(missionActionError.message || "미션 처리에 실패했습니다.")
+  } finally {
+    missionActionId.value = null
+  }
+}
+
+onMounted(() => {
+  void loadGoalPage({ force: true })
+  void loadTodayMissionList()
+})
 </script>
 
 <template>
   <section class="assistant-page">
-    <header class="assistant-header mb-4">
-      <h1 class="mb-2 fw-bold">AI 컨설팅</h1>
-      <p class="mb-0 text-secondary">
-        AI가 당신의 재무 상황을 분석하고, 목표 달성을 위한 맞춤 로드맵을 제안해드립니다.
-      </p>
-    </header>
+    <AppPageHeader class="assistant-header" title="AI 컨설팅" />
 
-    <div v-if="isLoading" class="state-card card border-0 shadow-sm" role="status">
-      <div class="card-body d-flex align-items-center justify-content-center gap-2">
-        <span class="spinner-border spinner-border-sm text-primary" aria-hidden="true"></span>
-        목표 정보를 불러오는 중입니다.
-      </div>
-    </div>
+    <AppAlert
+      v-if="refreshing"
+      class="assistant-refresh-status"
+      variant="neutral"
+      role="status"
+      :show-icon="false"
+      message="최신 목표 정보를 확인하는 중입니다."
+    />
 
-    <div v-else-if="error" class="state-card card border-0 shadow-sm">
-      <div class="card-body text-center">
-        <p class="mb-3 text-danger">{{ error }}</p>
-        <button type="button" class="btn btn-outline-primary" @click="loadGoalPage">
+    <AppAlert
+      v-if="error && goals.length"
+      class="assistant-refresh-error"
+      variant="warning"
+      :show-icon="false"
+    >
+      <div class="assistant-error-content">
+        <span>{{ error }}</span>
+        <AppButton variant="outline" size="sm" @click="loadGoalPage({ force: true })">
           다시 시도
-        </button>
+        </AppButton>
       </div>
-    </div>
+    </AppAlert>
+
+    <AppState
+      v-if="initialLoading"
+      class="state-card"
+      type="loading"
+      title="목표 정보를 불러오는 중입니다."
+      message="잠시만 기다려 주세요."
+    />
+
+    <AppState
+      v-else-if="error && !goals.length"
+      class="state-card"
+      type="error"
+      title="목표 정보를 불러오지 못했습니다."
+      :message="error"
+      action-text="다시 시도"
+      @action="loadGoalPage({ force: true })"
+    />
 
     <div v-else-if="!hasGoal" class="empty-dashboard">
       <div class="row g-4 align-items-stretch">
-        <div class="col-xl-8">
-          <article class="content-card card h-100 border-0 shadow-sm">
-            <div class="card-body p-4 p-lg-5">
+        <div class="col-xl-7">
+          <AppCard as="article" class="content-card goal-main-card h-100" padding="none">
+            <div class="card-body p-4">
               <h2 class="section-title h5 fw-bold">
                 나의 목표
-                <i class="bi bi-info-circle ms-1 text-secondary" aria-hidden="true"></i>
+                <i class="bi ms-1 text-secondary" aria-hidden="true"></i>
               </h2>
 
-              <div class="goal-empty-box mt-4">
+              <div class="goal-empty-box mt-3">
                 <div class="character-wrap" aria-hidden="true">
                   <span class="question-mark">?</span>
                   <img :src="walloCharacter" alt="" />
@@ -193,41 +331,127 @@ onMounted(loadGoalPage)
                 <div class="goal-empty-copy">
                   <h3 class="h4 fw-bold mb-2">아직 목표가 설정되지 않았어요!</h3>
                   <p class="mb-0 text-secondary">
-                    목표를 설정하면 AI가 당신만의 로드맵을 만들어 드릴게요.
+                    목표를 설정하면 당신만의 로드맵을 만들어 드릴게요.
                   </p>
                 </div>
-                <button type="button" class="btn goal-button" @click="startGoalSetting">
+                <AppButton class="goal-button" variant="primary" @click="startGoalSetting">
                   목표 설정하기
                   <i class="bi bi-arrow-right ms-2" aria-hidden="true"></i>
-                </button>
+                </AppButton>
+              </div>
+
+              <div class="goal-coaching-inline mt-3">
+                <div class="goal-coaching-copy">
+                  <span class="goal-coaching-label">
+                    <i class="bi bi-stars" aria-hidden="true"></i>
+                    왈로의 한마디
+                  </span>
+                  <p class="mb-0">목표가 있어야 방향이 생겨요! 작은 목표부터 함께 시작해봐요.</p>
+                </div>
+                <img :src="walloAdviceCharacter" alt="" aria-hidden="true" />
               </div>
             </div>
-          </article>
+          </AppCard>
         </div>
 
-        <div class="col-xl-4">
-          <aside class="content-card coaching-card card h-100 border-0 shadow-sm">
-            <div class="card-body p-4 p-lg-5">
-              <h2 class="section-title h5 fw-bold">AI 한줄 코칭</h2>
-              <div class="coach-bubble mt-4">
-                목표가 있어야 방향이 생겨요!<br />
-                작은 목표부터 함께 시작해봐요.
+        <div class="col-xl-5">
+          <AppCard as="aside" class="content-card mission-card h-100" padding="none">
+            <div class="card-body mission-card-body p-4">
+              <div class="mission-card-heading">
+                <h2 class="section-title h5 fw-bold">오늘의 미션</h2>
+                <strong v-if="missions.length" class="mission-count">
+                  {{ completedMissionCount }}/{{ missions.length }}
+                </strong>
               </div>
-              <div class="coach-character" aria-hidden="true">
-                <span class="sparkle sparkle-one">✦</span>
-                <span class="sparkle sparkle-two">✦</span>
-                <img :src="walloCharacter" alt="" />
+
+              <AppState
+                v-if="isMissionLoading && !missions.length"
+                class="mission-state mt-4"
+                type="loading"
+                compact
+                title="미션을 불러오는 중입니다."
+              />
+              <AppAlert
+                v-else-if="missionError"
+                class="mt-4"
+                variant="danger"
+                :message="missionError"
+              />
+              <div
+                v-else-if="missionStatus === MISSION_GENERATION_FAILED_STATUS"
+                class="mission-empty mt-4"
+              >
+                {{ missionFailureReason === "RATE_LIMIT"
+                  ? MISSION_RATE_LIMIT_MESSAGE
+                  : "오늘의 미션을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요." }}
+              </div>
+              <div
+                v-else-if="missionStatus === 'WAITING_ANALYSIS'"
+                class="mission-empty mission-empty-analysis mt-4"
+              >
+                <p class="mission-analysis-copy mb-0">
+                  소비 분석이 완료되면 오늘의 미션이 생성됩니다.
+                </p>
+                <AppButton
+                  class="mission-analysis-button"
+                  variant="primary"
+                  @click="startConsumptionAnalysis"
+                >
+                  소비분석 하러가기
+                  <i class="bi bi-arrow-right ms-2" aria-hidden="true"></i>
+                </AppButton>
+              </div>
+              <div v-else-if="!missions.length" class="mission-empty mt-4">
+                오늘 배정된 미션이 없습니다.
+              </div>
+              <div v-else class="mission-panel mt-4">
+                <ul class="mission-list list-unstyled mb-0">
+                  <li
+                    v-for="mission in missions"
+                    :key="mission.id"
+                    class="mission-list-item"
+                    :class="{ completed: mission.completed }"
+                  >
+                    <span class="mission-icon" aria-hidden="true">{{ mission.icon }}</span>
+                    <span class="mission-copy">
+                      <strong :title="mission.title">{{ mission.title }}</strong>
+                      <span class="mission-description" :title="mission.description">
+                        {{ mission.description }}
+                      </span>
+                    </span>
+                    <i
+                      class="mission-check-icon bi"
+                      :class="mission.completed ? 'bi-check-circle-fill' : 'bi-circle'"
+                      :aria-label="mission.completed ? '완료' : '미완료'"
+                    ></i>
+                    <span class="mission-guide" :title="getMissionVerificationInfo(mission).guide">
+                      <b>{{ getMissionVerificationInfo(mission).label }}</b>
+                      {{ getMissionVerificationInfo(mission).guide }}
+                    </span>
+                    <AppButton
+                      v-if="!mission.completed && mission.verificationType === 'SELF_CHECK'"
+                      class="mission-action-button"
+                      variant="outline"
+                      size="sm"
+                      :disabled="missionActionId === mission.id"
+                      :aria-label="`${mission.title} 완료 처리`"
+                      @click="runMissionAction(mission)"
+                    >
+                      {{ missionActionId === mission.id ? "확인 중..." : "완료하기" }}
+                    </AppButton>
+                  </li>
+                </ul>
               </div>
             </div>
-          </aside>
+          </AppCard>
         </div>
       </div>
 
-      <article class="content-card card border-0 shadow-sm mt-4">
+      <AppCard as="article" class="content-card mt-4" padding="none">
         <div class="card-body p-4 p-lg-5">
           <h2 class="section-title h5 fw-bold">
             목표 달성을 위한 로드맵
-            <i class="bi bi-info-circle ms-1 text-secondary" aria-hidden="true"></i>
+            <i class="bi ms-1 text-secondary" aria-hidden="true"></i>
           </h2>
 
           <ol class="roadmap-list list-unstyled mt-4 mb-0">
@@ -238,7 +462,9 @@ onMounted(loadGoalPage)
               :class="{ active: index === 0 }"
             >
               <span class="step-number">{{ step.number }}</span>
-              <span class="step-icon"><i class="bi" :class="step.icon" aria-hidden="true"></i></span>
+              <span class="step-icon"
+                ><i class="bi" :class="step.icon" aria-hidden="true"></i
+              ></span>
               <span class="step-copy">
                 <strong>{{ step.title }}</strong>
                 <small>{{ step.description }}</small>
@@ -251,9 +477,9 @@ onMounted(loadGoalPage)
             </li>
           </ol>
         </div>
-      </article>
+      </AppCard>
 
-      <article class="content-card card border-0 shadow-sm mt-4">
+      <AppCard as="article" class="content-card mt-4" padding="none">
         <div class="card-body p-4 p-lg-5">
           <h2 class="section-title h5 fw-bold">목표를 설정하면 얻을 수 있어요</h2>
           <div class="row g-3 mt-2">
@@ -268,41 +494,45 @@ onMounted(loadGoalPage)
             </div>
           </div>
         </div>
-      </article>
+      </AppCard>
     </div>
 
     <div v-else class="goal-dashboard">
       <div class="row g-4 align-items-stretch">
-        <div class="col-xl-8">
-          <article class="content-card card h-100 border-0 shadow-sm">
-            <div class="card-body p-4 p-lg-5">
+        <div class="col-xl-7">
+          <AppCard as="article" class="content-card goal-main-card" padding="none">
+            <div class="card-body p-4">
               <div class="goal-card-heading d-flex align-items-start justify-content-between gap-3">
-                <h2 class="section-title h5 fw-bold">나의 목표</h2>
+                <h2 class="section-title h4 fw-bold">
+                  나의 목표
+                </h2>
                 <div class="goal-heading-actions d-flex align-items-center gap-2">
                   <span class="goal-status-badge">진행 중</span>
-                  <button type="button" class="btn goal-chat-button" @click="startGoalSetting">
+                  <AppButton
+                    class="goal-chat-button"
+                    variant="outline"
+                    size="sm"
+                    @click="startAiChat"
+                  >
                     <i class="bi bi-chat-dots me-1" aria-hidden="true"></i>
                     AI와 상담하기
                     <i class="bi bi-arrow-right ms-1" aria-hidden="true"></i>
-                  </button>
+                  </AppButton>
                 </div>
               </div>
 
-              <div class="goal-summary mt-4">
-                <div class="goal-summary-icon" aria-hidden="true">
-                  <i class="bi bi-bullseye"></i>
-                </div>
+              <div class="goal-summary mt-3">
                 <div class="goal-summary-copy">
-                  <p class="goal-type mb-1">{{ currentGoal.goalType || "금융 목표" }}</p>
-                  <h3 class="h4 fw-bold mb-2">{{ currentGoal.title }}</h3>
                   <p class="mb-0 text-secondary">
                     {{ formatGoalDate(currentGoal.targetDate) }}까지
-                    <strong class="text-dark">{{ formatWon(currentGoal.targetAmount) }}</strong>
+                    <strong class="text-dark"
+                      >{{ currentGoal.title }} {{ formatWon(currentGoal.targetAmount) }}</strong
+                    > 모으기
                   </p>
                 </div>
               </div>
 
-              <div class="goal-progress-panel mt-4">
+              <div class="goal-progress-panel mt-3">
                 <div class="d-flex align-items-end justify-content-between gap-3">
                   <div>
                     <span class="small text-secondary">현재 모은 금액</span>
@@ -334,62 +564,163 @@ onMounted(loadGoalPage)
                 </div>
               </div>
 
-            </div>
-          </article>
-        </div>
-
-        <div class="col-xl-4">
-          <aside class="content-card coaching-card card h-100 border-0 shadow-sm">
-            <div class="card-body p-4 p-lg-5">
-              <h2 class="section-title h5 fw-bold">AI 한줄 코칭</h2>
-              <div class="coach-bubble mt-4">{{ coachingMessage }}</div>
-              <div class="coach-character" aria-hidden="true">
-                <span class="sparkle sparkle-one">✦</span>
-                <span class="sparkle sparkle-two">✦</span>
-                <img :src="walloCharacter" alt="" />
+              <div class="goal-coaching-inline mt-3">
+                <div class="goal-coaching-copy">
+                  <span class="goal-coaching-label">
+                    <i class="bi bi-stars" aria-hidden="true"></i>
+                    왈로의 한마디
+                  </span>
+                  <p class="mb-0">{{ coachingMessage }}</p>
+                </div>
+                <img :src="walloAdviceCharacter" alt="" aria-hidden="true" />
               </div>
             </div>
-          </aside>
+          </AppCard>
+        </div>
+
+        <div class="col-xl-5">
+          <AppCard as="aside" class="content-card mission-card h-100" padding="none">
+            <div class="card-body mission-card-body p-4">
+              <div class="mission-card-heading">
+                <h2 class="section-title h4 fw-bold">오늘의 미션</h2>
+                <strong v-if="missions.length" class="mission-count">
+                  {{ completedMissionCount }}/{{ missions.length }}
+                </strong>
+              </div>
+
+              <AppState
+                v-if="isMissionLoading && !missions.length"
+                class="mission-state mt-4"
+                type="loading"
+                compact
+                title="미션을 불러오는 중입니다."
+              />
+              <AppAlert
+                v-else-if="missionError"
+                class="mt-4"
+                variant="danger"
+                :message="missionError"
+              />
+              <div
+                v-else-if="missionStatus === MISSION_GENERATION_FAILED_STATUS"
+                class="mission-empty mt-4"
+              >
+                {{ missionFailureReason === "RATE_LIMIT"
+                  ? MISSION_RATE_LIMIT_MESSAGE
+                  : "오늘의 미션을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요." }}
+              </div>
+              <div
+                v-else-if="missionStatus === 'WAITING_ANALYSIS'"
+                class="mission-empty mission-empty-analysis mt-4"
+              >
+                <p class="mission-analysis-copy mb-0">
+                  소비 분석이 완료되면 오늘의 미션이 생성됩니다.
+                </p>
+                <AppButton
+                  class="mission-analysis-button"
+                  variant="primary"
+                  @click="startConsumptionAnalysis"
+                >
+                  소비분석 하러가기
+                  <i class="bi bi-arrow-right ms-2" aria-hidden="true"></i>
+                </AppButton>
+              </div>
+              <div v-else-if="!missions.length" class="mission-empty mt-4">
+                오늘 배정된 미션이 없습니다.
+              </div>
+              <div v-else class="mission-panel mt-4">
+                <ul class="mission-list list-unstyled mb-0">
+                  <li
+                    v-for="mission in missions"
+                    :key="mission.id"
+                    class="mission-list-item"
+                    :class="{ completed: mission.completed }"
+                  >
+                    <span class="mission-icon" aria-hidden="true">{{ mission.icon }}</span>
+                    <span class="mission-copy">
+                      <strong :title="mission.title">{{ mission.title }}</strong>
+                      <span class="mission-description" :title="mission.description">
+                        {{ mission.description }}
+                      </span>
+                    </span>
+                    <i
+                      class="mission-check-icon bi"
+                      :class="mission.completed ? 'bi-check-circle-fill' : 'bi-circle'"
+                      :aria-label="mission.completed ? '완료' : '미완료'"
+                    ></i>
+                    <span class="mission-guide" :title="getMissionVerificationInfo(mission).guide">
+                      <b>{{ getMissionVerificationInfo(mission).label }}</b>
+                      {{ getMissionVerificationInfo(mission).guide }}
+                    </span>
+                    <AppButton
+                      v-if="!mission.completed && mission.verificationType === 'SELF_CHECK'"
+                      class="mission-action-button"
+                      variant="outline"
+                      size="sm"
+                      :disabled="missionActionId === mission.id"
+                      :aria-label="`${mission.title} 완료 처리`"
+                      @click="runMissionAction(mission)"
+                    >
+                      {{ missionActionId === mission.id ? "확인 중..." : "완료하기" }}
+                    </AppButton>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </AppCard>
         </div>
       </div>
 
-      <article class="content-card card border-0 shadow-sm mt-4">
+      <AppCard as="article" class="content-card goal-roadmap-card mt-4" padding="none">
         <div class="card-body p-4 p-lg-5">
           <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
             <h2 class="section-title h5 fw-bold">목표 달성을 위한 로드맵</h2>
-            <div class="d-flex align-items-center gap-2">
-              <span class="small text-secondary">AI가 생성한 맞춤 계획</span>
-              <div v-if="goalRoadmapSteps.length > 1" class="roadmap-navigation" aria-label="로드맵 이동">
-                <button
-                  type="button"
-                  class="btn roadmap-navigation-button"
-                  aria-label="이전 로드맵 단계 보기"
-                  @click="scrollRoadmap(-1)"
-                >
-                  <i class="bi bi-chevron-left" aria-hidden="true"></i>
-                </button>
-                <button
-                  type="button"
-                  class="btn roadmap-navigation-button"
-                  aria-label="다음 로드맵 단계 보기"
-                  @click="scrollRoadmap(1)"
-                >
-                  <i class="bi bi-chevron-right" aria-hidden="true"></i>
-                </button>
-              </div>
+            <div
+              v-if="goalRoadmapSteps.length > 1"
+              class="roadmap-navigation"
+              aria-label="로드맵 이동"
+            >
+              <AppButton
+                class="roadmap-navigation-button"
+                variant="ghost"
+                size="sm"
+                aria-label="이전 로드맵 단계 보기"
+                @click="scrollRoadmap(-1)"
+              >
+                <i class="bi bi-chevron-left" aria-hidden="true"></i>
+              </AppButton>
+              <AppButton
+                class="roadmap-navigation-button"
+                variant="ghost"
+                size="sm"
+                aria-label="다음 로드맵 단계 보기"
+                @click="scrollRoadmap(1)"
+              >
+                <i class="bi bi-chevron-right" aria-hidden="true"></i>
+              </AppButton>
             </div>
           </div>
 
-          <div v-if="isRoadmapLoading" class="roadmap-state text-secondary mt-4" role="status">
-            <span class="spinner-border spinner-border-sm text-primary me-2"></span>
-            저장된 로드맵을 불러오는 중입니다.
-          </div>
-          <div v-else-if="roadmapError" class="alert alert-danger mt-4 mb-0">
-            {{ roadmapError }}
-          </div>
-          <div v-else-if="roadmap?.generationStatus === 'FAILED'" class="alert alert-warning mt-4 mb-0">
-            AI 로드맵 생성에 실패했습니다. 목표는 정상적으로 저장되어 있습니다.
-          </div>
+          <AppState
+            v-if="isRoadmapLoading"
+            class="roadmap-state mt-4"
+            type="loading"
+            compact
+            title="저장된 로드맵을 불러오는 중입니다."
+            message="잠시만 기다려 주세요."
+          />
+          <AppAlert
+            v-else-if="roadmapError"
+            class="roadmap-alert mt-4"
+            variant="danger"
+            :message="roadmapError"
+          />
+          <AppAlert
+            v-else-if="roadmap?.generationStatus === 'FAILED'"
+            class="roadmap-alert mt-4"
+            variant="warning"
+            message="AI 로드맵 생성에 실패했습니다. 목표는 정상적으로 저장되어 있습니다."
+          />
           <ol
             v-else-if="goalRoadmapSteps.length"
             ref="roadmapSlider"
@@ -406,7 +737,9 @@ onMounted(loadGoalPage)
                 <i v-if="step.completed" class="bi bi-check-lg" aria-hidden="true"></i>
                 <template v-else>{{ step.number }}</template>
               </span>
-              <span class="step-icon"><i class="bi" :class="step.icon" aria-hidden="true"></i></span>
+              <span class="step-icon"
+                ><i class="bi" :class="step.icon" aria-hidden="true"></i
+              ></span>
               <span class="step-copy">
                 <small class="step-date">{{ step.date }}</small>
                 <strong>{{ step.title }}</strong>
@@ -414,16 +747,19 @@ onMounted(loadGoalPage)
                 <small v-for="action in step.actionItems" :key="action" class="roadmap-action">
                   · {{ action }}
                 </small>
-                <button
-                  type="button"
-                  class="btn btn-sm roadmap-progress-button mt-2"
-                  :class="step.completed ? 'btn-outline-secondary' : 'btn-outline-primary'"
+                <AppButton
+                  class="roadmap-progress-button mt-2"
+                  :variant="step.completed ? 'secondary' : 'outline'"
+                  size="sm"
                   :disabled="isRoadmapProgressSaving"
                   @click="toggleRoadmapStep(step)"
                 >
-                  <i class="bi me-1" :class="step.completed ? 'bi-arrow-counterclockwise' : 'bi-check-circle'"></i>
+                  <i
+                    class="bi me-1"
+                    :class="step.completed ? 'bi-arrow-counterclockwise' : 'bi-check-circle'"
+                  ></i>
                   {{ step.completed ? "완료 취소" : "이 단계까지 완료" }}
-                </button>
+                </AppButton>
               </span>
               <i
                 v-if="index < goalRoadmapSteps.length - 1"
@@ -432,13 +768,19 @@ onMounted(loadGoalPage)
               ></i>
             </li>
           </ol>
-          <p v-else class="roadmap-state text-secondary mt-4 mb-0">
-            아직 생성된 로드맵이 없습니다.
-          </p>
+          <AppState
+            v-else
+            class="roadmap-state mt-4"
+            type="empty"
+            compact
+            hide-icon
+            title="아직 생성된 로드맵이 없습니다."
+            message="목표를 저장하면 AI가 맞춤 로드맵을 준비합니다."
+          />
         </div>
-      </article>
+      </AppCard>
 
-      <article class="content-card card border-0 shadow-sm mt-4">
+      <AppCard as="article" class="content-card mt-4" padding="none">
         <div class="card-body p-4 p-lg-5">
           <h2 class="section-title h5 fw-bold">이번 달 실천 가이드</h2>
           <div class="row g-3 mt-2">
@@ -447,7 +789,10 @@ onMounted(loadGoalPage)
                 <span class="action-icon"><i class="bi bi-arrow-repeat"></i></span>
                 <div>
                   <h3 class="h6 fw-bold mb-2">자동 저축 설정</h3>
-                  <p class="mb-0 text-secondary">급여일에 {{ formatWon(currentGoal.requiredMonthlyAmount) }}이 자동으로 이체되도록 설정해보세요.</p>
+                  <p class="mb-0 text-secondary">
+                    급여일에 {{ formatWon(currentGoal.requiredMonthlyAmount) }}이 자동으로
+                    이체되도록 설정해보세요.
+                  </p>
                 </div>
               </div>
             </div>
@@ -456,7 +801,9 @@ onMounted(loadGoalPage)
                 <span class="action-icon"><i class="bi bi-calendar-check"></i></span>
                 <div>
                   <h3 class="h6 fw-bold mb-2">월말 진행 점검</h3>
-                  <p class="mb-0 text-secondary">월말에 목표 계좌 잔액과 계획 대비 달성률을 확인해보세요.</p>
+                  <p class="mb-0 text-secondary">
+                    월말에 목표 계좌 잔액과 계획 대비 달성률을 확인해보세요.
+                  </p>
                 </div>
               </div>
             </div>
@@ -465,13 +812,15 @@ onMounted(loadGoalPage)
                 <span class="action-icon"><i class="bi bi-shield-check"></i></span>
                 <div>
                   <h3 class="h6 fw-bold mb-2">계획 유지하기</h3>
-                  <p class="mb-0 text-secondary">부족한 달은 다음 달 납입액을 조정해 목표 일정이 밀리지 않게 관리해요.</p>
+                  <p class="mb-0 text-secondary">
+                    부족한 달은 다음 달 납입액을 조정해 목표 일정이 밀리지 않게 관리해요.
+                  </p>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </article>
+      </AppCard>
     </div>
   </section>
 </template>
@@ -482,13 +831,21 @@ onMounted(loadGoalPage)
   color: #1c2440;
 }
 
-.assistant-header h1 {
-  font-size: clamp(1.75rem, 3vw, 2.35rem);
-  letter-spacing: -0.045em;
+.assistant-header :deep(.app-page-header__description) {
+  font-size: 1.05rem;
 }
 
-.assistant-header p {
-  font-size: 1.05rem;
+.assistant-refresh-status,
+.assistant-refresh-error {
+  margin-bottom: var(--wallo-space-3);
+}
+
+.assistant-error-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wallo-space-2);
 }
 
 .content-card,
@@ -513,25 +870,24 @@ onMounted(loadGoalPage)
 
 .goal-empty-box {
   display: flex;
-  min-height: 230px;
+  min-height: 170px;
   align-items: center;
   gap: 2rem;
-  padding: 2rem 2.25rem;
-  border: 2px dashed #c9c5ff;
+  padding: 1.35rem 1.5rem;
+  border: 2px dashed var(--wallo-color-border);
   border-radius: 20px;
-  background: linear-gradient(135deg, #fff 0%, #f7f6ff 100%);
+  background: linear-gradient(135deg, #fff 0%, #f5faff 100%);
 }
 
 .character-wrap {
   position: relative;
-  flex: 0 0 150px;
+  flex: 0 0 112px;
   text-align: center;
 }
 
-.character-wrap img,
-.coach-character img {
-  width: 135px;
-  max-height: 145px;
+.character-wrap img {
+  width: 104px;
+  max-height: 112px;
   object-fit: contain;
 }
 
@@ -539,8 +895,8 @@ onMounted(loadGoalPage)
   position: absolute;
   top: -24px;
   right: 4px;
-  color: #8a7df2;
-  font-size: 3.6rem;
+  color: #7fa9e8;
+  font-size: 2.75rem;
   font-weight: 800;
 }
 
@@ -550,61 +906,285 @@ onMounted(loadGoalPage)
   line-height: 1.75;
 }
 
-.goal-button {
+.goal-button,
+.mission-analysis-button {
   flex: 0 0 auto;
   padding: 0.85rem 1.5rem;
   border: 0;
   border-radius: 14px;
   color: #fff;
-  background: linear-gradient(135deg, #7769f5, #6453e8);
-  box-shadow: 0 10px 24px rgb(100 83 232 / 22%);
+  background: linear-gradient(135deg, #71a1e8, #5a91dc);
+  box-shadow: 0 10px 24px rgb(79 143 232 / 22%);
   font-weight: 700;
 }
 
 .goal-button:hover,
-.goal-button:focus {
+.goal-button:focus,
+.mission-analysis-button:hover,
+.mission-analysis-button:focus {
   color: #fff;
-  background: linear-gradient(135deg, #695ce6, #5644d8);
+  background: linear-gradient(135deg, #6599e2, #477fc8);
 }
 
-.coaching-card .card-body {
-  position: relative;
-  min-height: 100%;
+.goal-coaching-inline {
+  display: flex;
+  min-height: 78px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.85rem 1.15rem;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #f5faff 0%, #eaf4ff 100%);
 }
 
-.coach-bubble {
+.goal-coaching-copy {
   position: relative;
-  width: fit-content;
-  max-width: 100%;
-  padding: 1.25rem 1.5rem;
-  border-radius: 22px 22px 8px 22px;
-  background: #f1f0ff;
+  display: flex;
+  flex: 1 1 auto;
+  align-self: stretch;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  text-align: left;
+}
+
+.goal-coaching-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+  color: #4d85dd;
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: left;
+}
+
+.goal-coaching-copy p {
   color: #424862;
   font-weight: 600;
   line-height: 1.7;
 }
 
-.coach-character {
+.goal-coaching-inline img {
+  width: 108px;
+  height: 104px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.mission-card :deep(.app-card__body),
+.mission-card .card-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.mission-card-heading {
+  display: flex;
+  align-items: center;
+}
+
+.mission-card-heading {
+  align-items: flex-start;
+}
+
+.mission-card-heading {
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mission-count {
+  display: inline-flex;
+  min-width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(135deg, #71a1e8, #4d86d1);
+  font-size: 0.68rem;
+}
+
+.mission-state,
+.mission-empty {
+  border-radius: 16px;
+  background: #f6faff;
+}
+
+.mission-empty {
+  padding: 1.5rem 1.25rem;
+  color: #73798d;
+  line-height: 1.65;
+  text-align: center;
+}
+
+.mission-empty-analysis {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: transparent;
+}
+
+.mission-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.mission-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.mission-list-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.55rem 0.8rem;
+  padding: 0.9rem;
+  border: 1px solid #e7e7f2;
+  border-radius: 15px;
+  background: var(--wallo-color-surface);
+}
+
+.mission-list-item.completed {
+  border-color: #cec9fa;
+  background: #f6faff;
+}
+
+.mission-icon {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: #eaf4ff;
+  font-size: 1.2rem;
+}
+
+.mission-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.mission-copy strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mission-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #6f7588;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mission-guide {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  padding: 0.45rem 0.55rem;
+  border-radius: 9px;
+  background: #eef7ff;
+  color: #555d73;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-guide b {
+  margin-right: 0.25rem;
+  color: #4d85dd;
+  font-size: 0.72rem;
+}
+
+.mission-action-button {
   position: absolute;
-  right: 1.75rem;
-  bottom: 1.5rem;
+  z-index: 2;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 14px;
+  opacity: 0;
+  color: #fff;
+  background: rgb(101 85 223 / 88%);
+  box-shadow: none;
+  font-weight: 700;
+  pointer-events: none;
+  transition: opacity 160ms ease;
 }
 
-.sparkle {
-  position: absolute;
-  color: #8b7cf4;
-  font-size: 1.5rem;
+.mission-list-item > :not(.mission-action-button) {
+  transition:
+    opacity 160ms ease,
+    filter 160ms ease;
 }
 
-.sparkle-one {
-  top: 12px;
-  left: -22px;
+.mission-list-item:has(.mission-action-button):hover > :not(.mission-action-button),
+.mission-list-item:has(.mission-action-button):focus-within > :not(.mission-action-button) {
+  opacity: 0.22;
+  filter: blur(0.6px);
 }
 
-.sparkle-two {
-  top: 52px;
-  left: -43px;
-  font-size: 1rem;
+.mission-list-item:hover .mission-action-button,
+.mission-list-item:focus-within .mission-action-button,
+.mission-action-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .mission-action-button {
+    position: static;
+    grid-column: 1 / -1;
+    min-height: 34px;
+    opacity: 1;
+    color: #4d85dd;
+    background: #eef7ff;
+    pointer-events: auto;
+  }
+
+  .mission-list-item:has(.mission-action-button):focus-within > :not(.mission-action-button) {
+    opacity: 1;
+    filter: none;
+  }
+}
+
+.mission-list-item.completed .mission-copy strong {
+  color: #8b8fa0;
+  text-decoration: line-through;
+}
+
+.mission-check-icon {
+  margin-top: 0.1rem;
+  color: #aaaebd;
+  font-size: 1.2rem;
+}
+
+.mission-list-item.completed .mission-check-icon {
+  color: #548be0;
 }
 
 .roadmap-list {
@@ -615,13 +1195,13 @@ onMounted(loadGoalPage)
 
 .goal-roadmap-list {
   display: flex;
-  gap: 1.5rem;
+  gap: 2.25rem;
   overflow-x: auto;
   padding: 0.85rem 0.5rem 1.25rem;
   scroll-behavior: smooth;
   scroll-padding-inline: 0.5rem;
   scroll-snap-type: x mandatory;
-  scrollbar-color: #c8c3fb #f1f0fa;
+  scrollbar-color: #c7ddf7 var(--wallo-color-surface-soft);
   scrollbar-width: thin;
 }
 
@@ -632,32 +1212,61 @@ onMounted(loadGoalPage)
 }
 
 .goal-roadmap-list .roadmap-arrow {
-  right: -1.35rem;
+  right: -1.8rem;
+  font-size: 1.35rem;
+}
+
+.goal-roadmap-card {
+  position: relative;
+}
+
+.goal-roadmap-card .card-body {
+  position: relative;
 }
 
 .roadmap-navigation {
-  display: inline-flex;
-  gap: 0.4rem;
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: block;
+  pointer-events: none;
 }
 
 .roadmap-navigation-button {
+  position: absolute;
+  top: 50%;
   display: inline-flex;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 52px;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid #dcd8fb;
-  border-radius: 50%;
-  color: #6555df;
-  background: #fff;
+  border: 0;
+  border-radius: var(--wallo-radius-md);
+  color: #4d85dd;
+  background: transparent;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+
+.roadmap-navigation-button :deep(.bi) {
+  font-size: 1.75rem;
+  font-weight: 700;
+  -webkit-text-stroke: 0.35px currentColor;
 }
 
 .roadmap-navigation-button:hover,
 .roadmap-navigation-button:focus-visible {
-  border-color: #7567e9;
-  color: #fff;
-  background: #7567e9;
+  color: #6a9ce3;
+  background: rgb(79 143 232 / 8%);
+}
+
+.roadmap-navigation-button:first-child {
+  left: 0.75rem;
+}
+
+.roadmap-navigation-button:last-child {
+  right: 0.75rem;
 }
 
 .roadmap-item {
@@ -673,8 +1282,8 @@ onMounted(loadGoalPage)
 }
 
 .roadmap-item.active {
-  border: 2px solid #7a6df0;
-  background: #fbfaff;
+  border: 2px solid #77a8e7;
+  background: #f7fbff;
 }
 
 .step-number {
@@ -694,7 +1303,7 @@ onMounted(loadGoalPage)
 
 .active .step-number {
   color: #fff;
-  background: #7162eb;
+  background: #548be0;
 }
 
 .step-icon {
@@ -711,8 +1320,8 @@ onMounted(loadGoalPage)
 }
 
 .active .step-icon {
-  color: #6b5ce8;
-  background: #ebe9ff;
+  color: #659be8;
+  background: #e8f3ff;
 }
 
 .step-copy {
@@ -742,14 +1351,14 @@ onMounted(loadGoalPage)
   align-items: center;
   gap: 1.25rem;
   padding: 1.5rem;
-  border: 1px solid #e8e8f4;
+  border: 1px solid #e7f1f9;
   border-radius: 18px;
-  background: linear-gradient(135deg, #fff, #faf9ff);
+  background: linear-gradient(135deg, #fff, #f8fbff);
 }
 
 .benefit-icon {
   flex: 0 0 auto;
-  color: #7162eb;
+  color: #548be0;
   font-size: 3rem;
 }
 
@@ -761,27 +1370,27 @@ onMounted(loadGoalPage)
 .goal-status-badge {
   padding: 0.4rem 0.75rem;
   border-radius: 999px;
-  color: #6555df;
-  background: #eeecff;
+  color: #4d85dd;
+  background: #eaf4ff;
   font-size: 0.8rem;
   font-weight: 700;
 }
 
 .goal-chat-button {
   padding: 0.55rem 0.9rem;
-  border: 1px solid #7567e9;
+  border: 1px solid #6a9ce3;
   border-radius: 12px;
-  color: #6555df;
+  color: #4d85dd;
   background: #fff;
   font-size: 0.85rem;
   font-weight: 700;
 }
 
-.goal-chat-button:hover,
-.goal-chat-button:focus {
-  border-color: #6555df;
-  color: #fff;
-  background: #6555df;
+.goal-chat-button.app-button--outline:hover:not(:disabled),
+.goal-chat-button.app-button--outline:focus {
+  border-color: var(--wallo-color-primary-hover);
+  color: var(--wallo-color-surface);
+  background: var(--wallo-color-primary);
 }
 
 .goal-summary {
@@ -790,34 +1399,15 @@ onMounted(loadGoalPage)
   gap: 1.25rem;
 }
 
-.goal-summary-icon {
-  display: inline-flex;
-  width: 72px;
-  height: 72px;
-  flex: 0 0 72px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 22px;
-  color: #6d5dea;
-  background: #eeecff;
-  font-size: 2.1rem;
-}
-
-.goal-type {
-  color: #7568e7;
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
 .goal-progress-panel {
-  padding: 1.4rem 1.5rem;
+  padding: 1rem 1.2rem;
   border-radius: 18px;
-  background: #f8f8fe;
+  background: #f6faff;
 }
 
 .goal-current-amount {
-  color: #5f50d8;
-  font-size: 1.55rem;
+  color: var(--wallo-color-primary);
+  font-size: 1.35rem;
   font-weight: 800;
 }
 
@@ -828,19 +1418,19 @@ onMounted(loadGoalPage)
 }
 
 .goal-rate {
-  color: #6455df;
+  color: #4e84d5;
   font-size: 1.1rem;
 }
 
 .goal-progress {
   height: 0.7rem;
   border-radius: 999px;
-  background: #e6e4fb;
+  background: var(--wallo-color-progress-track);
 }
 
 .goal-progress .progress-bar {
   border-radius: inherit;
-  background: linear-gradient(90deg, #7567ee, #5e4fde);
+  background: linear-gradient(90deg, #6e9fe8, #4b87d8);
 }
 
 .goal-meta > div {
@@ -856,24 +1446,24 @@ onMounted(loadGoalPage)
 }
 
 .roadmap-item.completed:not(.active) {
-  border-color: #c8c3fb;
-  background: #faf9ff;
+  border-color: #c7ddf7;
+  background: #f8fbff;
 }
 
 .roadmap-item.completed .step-number {
   color: #fff;
-  background: #8275ec;
+  background: #7da9e5;
 }
 
 .step-date {
-  color: #7162e4 !important;
+  color: #6095dc !important;
   font-weight: 700;
 }
 
 .roadmap-state {
   padding: 1.5rem;
   border-radius: 16px;
-  background: #f8f8fe;
+  background: #f6faff;
   text-align: center;
 }
 
@@ -893,9 +1483,9 @@ onMounted(loadGoalPage)
   align-items: flex-start;
   gap: 1rem;
   padding: 1.4rem;
-  border: 1px solid #e8e8f4;
+  border: 1px solid #e7f1f9;
   border-radius: 18px;
-  background: #fcfcff;
+  background: var(--wallo-color-surface);
 }
 
 .action-icon {
@@ -906,8 +1496,8 @@ onMounted(loadGoalPage)
   align-items: center;
   justify-content: center;
   border-radius: 14px;
-  color: #6d5dea;
-  background: #eeecff;
+  color: #568bd6;
+  background: #eaf4ff;
   font-size: 1.35rem;
 }
 
@@ -917,10 +1507,6 @@ onMounted(loadGoalPage)
 }
 
 @media (max-width: 1199.98px) {
-  .coaching-card {
-    min-height: 310px;
-  }
-
   .roadmap-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -939,7 +1525,7 @@ onMounted(loadGoalPage)
 }
 
 @media (max-width: 767.98px) {
-  .assistant-header p {
+  .assistant-header :deep(.app-page-header__description) {
     font-size: 0.95rem;
   }
 
@@ -953,8 +1539,19 @@ onMounted(loadGoalPage)
     flex-basis: auto;
   }
 
-  .goal-button {
+  .goal-button,
+  .mission-analysis-button {
     width: 100%;
+  }
+
+  .goal-coaching-inline {
+    align-items: center;
+    padding: 1.15rem 1.25rem;
+  }
+
+  .goal-coaching-inline img {
+    width: 72px;
+    height: 68px;
   }
 
   .goal-card-heading {

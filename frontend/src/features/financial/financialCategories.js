@@ -4,6 +4,7 @@ const expenseCategory = (label, color, icon, colorClass) =>
   Object.freeze({ label, color, icon, colorClass });
 
 export const ASSET_CATEGORY_META = Object.freeze({
+  CHECKING: assetCategory("입출금", "#8170ff"),
   DEPOSIT: assetCategory("입출금", "#8170ff"),
   SAVINGS: assetCategory("예·적금", "#55c2a3"),
   STOCK: assetCategory("투자", "#ffb657"),
@@ -32,6 +33,7 @@ export const EXPENSE_CATEGORY_META = Object.freeze({
   EDUCATION: expenseCategory("교육", "#f0b44d", "bi-book", "blue"),
   LOAN_REPAYMENT: expenseCategory("대출상환", "#c47cff", "bi-bank", "purple"),
   INCOME: expenseCategory("수입", "#4f73e8", "bi-wallet2", "blue"),
+  RECEIVE: expenseCategory("받은 돈", "#55c2a3", "bi-arrow-down-left", "green"),
   SEND: expenseCategory("보낸 돈", "#8170ff", "bi-arrow-up-right", "purple"),
   ETC: expenseCategory("기타", "#a0a6b5", "bi-receipt", "gray"),
 });

@@ -25,6 +25,39 @@ const analysis = {
 }
 
 describe("ChatMessage", () => {
+  it("renders a product recommendation response as cards with markdown reason", () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        message: {
+          id: 4,
+          role: "assistant",
+          content: "**Recommendation reason**\n\n- Matches the requested term",
+          productRecommendation: {
+            productType: "deposit",
+            termMonths: 12,
+            amountKrw: 1000000,
+            products: [
+              {
+                ranking: 1,
+                companyName: "Wallo Bank",
+                productName: "Safe Deposit",
+                baseRatePercent: 2.5,
+                preferentialRatePercent: 3.1,
+              },
+            ],
+          },
+          animate: false,
+        },
+      },
+    })
+
+    expect(wrapper.find(".product-recommendation").exists()).toBe(true)
+    expect(wrapper.text()).toContain("Safe Deposit")
+    expect(wrapper.find(".message-content--markdown").exists()).toBe(false)
+    expect(wrapper.find(".product-recommendation__reason-markdown strong").text())
+      .toBe("Recommendation reason")
+  })
+
   it("소비분석 메시지는 카드만 표시하고 AI 줄글은 숨긴다", () => {
     const wrapper = mount(ChatMessage, {
       props: {
@@ -60,6 +93,24 @@ describe("ChatMessage", () => {
     expect(wrapper.find(".message-content--markdown").exists()).toBe(true)
   })
 
+  it("keeps the typing cursor inside the assistant content card", () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        message: {
+          id: 5,
+          role: "assistant",
+          content: "답변을 작성하는 중입니다.",
+          animate: true,
+        },
+      },
+    })
+
+    expect(wrapper.find(".message-content--typing").exists()).toBe(true)
+    expect(wrapper.find(".message-bubble > .typing-cursor").exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+
   it("renders an asset analysis response as cards instead of markdown", () => {
     const wrapper = mount(ChatMessage, {
       props: {
@@ -86,5 +137,24 @@ describe("ChatMessage", () => {
     expect(wrapper.text()).toContain("120,000,000")
     expect(wrapper.text()).not.toContain("This prose should not be rendered")
     expect(wrapper.find(".message-content--markdown").exists()).toBe(false)
+  })
+
+  it("renders parenthesized strong emphasis before a Korean suffix", () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        message: {
+          id: 6,
+          role: "assistant",
+          content: "3. **예치금(예금 기준) 또는 매월 납입금(적금 기준)**은 어느 정도인지 알려 주세요.",
+          animate: false,
+        },
+      },
+    })
+
+    const content = wrapper.find(".message-content--markdown")
+    expect(content.find("strong").text()).toBe(
+      "예치금(예금 기준) 또는 매월 납입금(적금 기준)",
+    )
+    expect(content.text()).not.toContain("**")
   })
 })
