@@ -70,8 +70,10 @@ const logRequestEnd = (config, { status, failed = false } = {}) => {
   })
 }
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/").replace(/\/$/, "")
+
 const httpClient = axios.create({
-  baseURL: "/",
+  baseURL: API_BASE_URL || "/",
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",
@@ -113,7 +115,7 @@ httpClient.interceptors.response.use(
       error.config._retry = true
       try {
         const refreshRequestId = createRequestId()
-        const refreshResponse = await axios.post("/api/auth/refresh", null, {
+        const refreshResponse = await axios.post(`${API_BASE_URL}/api/auth/refresh`, null, {
           withCredentials: true,
           headers: { "X-Request-Id": refreshRequestId },
         })
