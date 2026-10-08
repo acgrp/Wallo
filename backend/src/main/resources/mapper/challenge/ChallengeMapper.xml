@@ -76,7 +76,7 @@
             parameterType="com.wallo.challenge.domain.Challenge"
             useGeneratedKeys="true"
             keyProperty="id">
-        INSERT INTO challenge (
+        INSERT INTO CHALLENGE (
             owner_id,
             name,
             challenge_type,
@@ -102,7 +102,7 @@
             invite_code,
             status,
             created_at
-        FROM challenge
+        FROM CHALLENGE
         WHERE id = #{challengeId}
     </select>
 
@@ -115,26 +115,26 @@
             invite_code,
             status,
             created_at
-        FROM challenge
+        FROM CHALLENGE
         WHERE UPPER(TRIM(invite_code)) = #{inviteCode}
           AND status = 'ACTIVE'
     </select>
 
     <select id="findCurrentChallengeIdByUserId" resultType="java.lang.Long">
         SELECT current_challenge_id
-        FROM users
+        FROM USERS
         WHERE id = #{userId}
     </select>
 
     <update id="updateCurrentChallengeId">
-        UPDATE users
+        UPDATE USERS
         SET current_challenge_id = #{challengeId}
         WHERE id = #{userId}
           AND current_challenge_id IS NULL
     </update>
 
     <update id="clearCurrentChallengeId">
-        UPDATE users
+        UPDATE USERS
         SET current_challenge_id = NULL
         WHERE id = #{userId}
           AND current_challenge_id = #{challengeId}
@@ -242,12 +242,12 @@
             COALESCE(feed_stats.received_like_count, 0) AS received_like_count,
             (
                 SELECT COUNT(*)
-                FROM message
+                FROM MESSAGE
                 WHERE message.user_id = users.id
                   AND message.message_type = 'REPLY'
             ) AS comment_count
-        FROM users
-        LEFT JOIN challenge
+        FROM USERS
+        LEFT JOIN CHALLENGE
             ON challenge.id = users.current_challenge_id
         LEFT JOIN (
             SELECT
@@ -279,7 +279,7 @@
                 ROUND(AVG(feed.saving_amount), 0) AS average_saving_amount,
                 COUNT(*) AS post_count,
                 SUM(feed.like_count) AS received_like_count
-            FROM feed
+            FROM FEED
             WHERE feed.status = 'ACTIVE'
               AND feed.file_deleted_at IS NULL
             GROUP BY feed.user_id
@@ -331,7 +331,7 @@
             AS month,
             COALESCE(SUM(feed.saving_amount), 0) AS saving_amount
         FROM periods
-        LEFT JOIN feed
+        LEFT JOIN FEED
             ON feed.user_id = #{userId}
            AND feed.status = 'ACTIVE'
            AND feed.file_deleted_at IS NULL
@@ -360,7 +360,7 @@
             feed.media_type,
             feed.like_count,
             feed.created_at
-        FROM feed
+        FROM FEED
         WHERE feed.user_id = #{userId}
           AND feed.status = 'ACTIVE'
           AND feed.file_deleted_at IS NULL
