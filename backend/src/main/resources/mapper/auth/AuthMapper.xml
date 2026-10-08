@@ -78,7 +78,7 @@
 
     <select id="countActiveConnections" resultType="int">
         SELECT COUNT(*)
-        FROM connections
+        FROM CONNECTIONS
         WHERE user_id = #{userId}
           AND status = 'ACTIVE'
           AND deleted_at IS NULL
