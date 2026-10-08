@@ -142,7 +142,7 @@
 
     <select id="countByInviteCode" resultType="int">
         SELECT COUNT(*)
-        FROM challenge
+        FROM CHALLENGE
         WHERE invite_code = #{inviteCode}
     </select>
 

@@ -12,19 +12,19 @@
             nickname,
             email,
             profile_image_url AS profileImageUrl
-        FROM users
+        FROM USERS
         WHERE id = #{userId}
     </select>
 
     <select id="countByNicknameExceptUserId" resultType="int">
         SELECT COUNT(*)
-        FROM users
+        FROM USERS
         WHERE nickname = #{nickname}
           AND id &lt;&gt; #{userId}
     </select>
 
     <update id="updateNickname">
-        UPDATE users
+        UPDATE USERS
         SET nickname = #{nickname},
             updated_at = CURRENT_TIMESTAMP
         WHERE id = #{userId}
@@ -32,12 +32,12 @@
 
     <select id="findPasswordHash" resultType="string">
         SELECT password_hash
-        FROM users
+        FROM USERS
         WHERE id = #{userId}
     </select>
 
     <update id="updatePasswordHash">
-        UPDATE users
+        UPDATE USERS
         SET password_hash = #{passwordHash},
             updated_at = CURRENT_TIMESTAMP
         WHERE id = #{userId}
@@ -45,12 +45,12 @@
 
     <select id="findProfileImageUrl" resultType="string">
         SELECT profile_image_url
-        FROM users
+        FROM USERS
         WHERE id = #{userId}
     </select>
 
     <update id="updateProfileImageUrl">
-        UPDATE users
+        UPDATE USERS
         SET profile_image_url = #{profileImageUrl},
             updated_at = CURRENT_TIMESTAMP
         WHERE id = #{userId}

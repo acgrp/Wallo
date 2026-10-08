@@ -144,7 +144,7 @@ class NewsServiceImplTest {
         int selectEnd = mapperXml.indexOf("</select>", selectStart);
         String querySql = mapperXml.substring(selectStart, selectEnd);
 
-        assertTrue(querySql.contains("JOIN news_report"), "news_report와의 JOIN이 없습니다.");
+        assertTrue(querySql.contains("JOIN NEWS_REPORT"), "NEWS_REPORT와의 JOIN이 없습니다.");
         assertTrue(!querySql.contains("LEFT JOIN"), "LEFT JOIN을 사용하면 리포트가 없는 뉴스까지 노출됩니다.");
     }
 

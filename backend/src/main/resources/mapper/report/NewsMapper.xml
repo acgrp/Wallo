@@ -22,7 +22,7 @@
             parameterType="com.wallo.report.domain.News"
             useGeneratedKeys="true"
             keyProperty="newsId">
-        INSERT INTO news (
+        INSERT INTO NEWS (
             title,
             content,
             source,
@@ -41,7 +41,7 @@
 
     <select id="existsByUrl" resultType="int">
         SELECT COUNT(*)
-        FROM news
+        FROM NEWS
         WHERE url = #{url}
     </select>
 
@@ -56,7 +56,7 @@
             published_at,
             created_at,
             updated_at
-        FROM news
+        FROM NEWS
         WHERE news_id = #{newsId}
     </select>
 
@@ -71,7 +71,7 @@
             published_at,
             created_at,
             updated_at
-        FROM news
+        FROM NEWS
         ORDER BY published_at DESC
         LIMIT #{limit}
     </select>
@@ -105,8 +105,8 @@
             n.published_at,
             nr.summary,
             true AS analyzed
-        FROM news n
-        JOIN news_report nr ON n.news_id = nr.news_id
+        FROM NEWS n
+        JOIN NEWS_REPORT nr ON n.news_id = nr.news_id
         WHERE COALESCE(n.published_at, n.created_at) >= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
         ORDER BY n.published_at IS NULL, n.published_at DESC, n.news_id DESC
     </select>
@@ -121,8 +121,8 @@
     -->
     <select id="findNewsIdsWithoutReport" resultType="long">
         SELECT n.news_id
-        FROM news n
-        LEFT JOIN news_report nr ON n.news_id = nr.news_id
+        FROM NEWS n
+        LEFT JOIN NEWS_REPORT nr ON n.news_id = nr.news_id
         WHERE nr.news_id IS NULL
           AND n.content IS NOT NULL
           AND TRIM(n.content) &lt;&gt; ''
@@ -132,20 +132,20 @@
 
     <delete id="deleteNewsTermsBeforePublishedAt">
         DELETE nt
-        FROM news_term nt
-        JOIN news n ON nt.news_id = n.news_id
+        FROM NEWS_TERM nt
+        JOIN NEWS n ON nt.news_id = n.news_id
         WHERE COALESCE(n.published_at, n.created_at) &lt; #{cutoff}
     </delete>
 
     <delete id="deleteNewsReportsBeforePublishedAt">
         DELETE nr
-        FROM news_report nr
-        JOIN news n ON nr.news_id = n.news_id
+        FROM NEWS_REPORT nr
+        JOIN NEWS n ON nr.news_id = n.news_id
         WHERE COALESCE(n.published_at, n.created_at) &lt; #{cutoff}
     </delete>
 
     <delete id="deleteNewsBeforePublishedAt">
-        DELETE FROM news
+        DELETE FROM NEWS
         WHERE COALESCE(published_at, created_at) &lt; #{cutoff}
     </delete>
 </mapper>

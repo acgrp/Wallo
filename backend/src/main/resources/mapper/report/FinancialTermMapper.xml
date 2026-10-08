@@ -19,6 +19,6 @@
             description,
             source,
             created_at
-        FROM financial_term
+        FROM FINANCIAL_TERM
     </select>
 </mapper>

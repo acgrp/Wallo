@@ -30,7 +30,7 @@
             response_strategy,
             created_at,
             updated_at
-        FROM news_report
+        FROM NEWS_REPORT
         WHERE news_id = #{newsId}
     </select>
 
@@ -39,7 +39,7 @@
             parameterType="com.wallo.report.domain.NewsReport"
             useGeneratedKeys="true"
             keyProperty="reportId">
-        INSERT INTO news_report (
+        INSERT INTO NEWS_REPORT (
             news_id,
             summary,
             event_description,

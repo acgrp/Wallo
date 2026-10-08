@@ -9,10 +9,10 @@
     </resultMap>
     <select id="findByNewsIdAndUserId" resultMap="personalizationMap">
         SELECT personalization_id, news_id, user_id, user_impact, response_strategy, created_at, updated_at
-        FROM news_report_personalization WHERE news_id = #{newsId} AND user_id = #{userId}
+        FROM NEWS_REPORT_PERSONALIZATION WHERE news_id = #{newsId} AND user_id = #{userId}
     </select>
     <insert id="insert" parameterType="com.wallo.report.domain.NewsReportPersonalization" useGeneratedKeys="true" keyProperty="personalizationId">
-        INSERT INTO news_report_personalization (news_id, user_id, user_impact, response_strategy)
+        INSERT INTO NEWS_REPORT_PERSONALIZATION (news_id, user_id, user_impact, response_strategy)
         VALUES (#{newsId}, #{userId}, #{userImpact}, #{responseStrategy})
     </insert>
     <select id="findUserProfile" resultType="com.wallo.report.domain.ReportUserProfile">
