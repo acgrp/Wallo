@@ -21,6 +21,7 @@ out/
 ### Local configuration ###
 application.properties
 application-local.properties
+!src/main/resources/application.properties
 
 ### Eclipse ###
 .apt_generated/

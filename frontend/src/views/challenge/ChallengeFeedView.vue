@@ -294,8 +294,12 @@ const loadMessages = async ({ forceScroll = false, force = false } = {}) => {
 
 const chatWebSocketUrl = () => {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+  const configuredBase = import.meta.env.VITE_WS_BASE_URL
+  const socketBase = configuredBase
+    ? configuredBase.replace(/^http:/, "ws:").replace(/^https:/, "wss:").replace(/\/$/, "")
+    : `${protocol}//${window.location.host}`
   const token = encodeURIComponent(getAccessToken() || "")
-  return `${protocol}//${window.location.host}/ws/challenges/${challengeId.value}?accessToken=${token}`
+  return `${socketBase}/ws/challenges/${challengeId.value}?accessToken=${token}`
 }
 
 const handleChatSocketMessage = async (event) => {

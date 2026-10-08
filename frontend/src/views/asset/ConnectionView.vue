@@ -381,6 +381,7 @@ onBeforeUnmount(() => {
           ></div>
         </div>
         <div class="connection-progress-percent">{{ progress }}%</div>
+        <p class="connection-progress-note">(실제 연결은 아니니 안심하세요)</p>
       </AppCard>
     </div>
 
@@ -511,6 +512,13 @@ onBeforeUnmount(() => {
   color: var(--wallo-color-text-muted);
   font-size: 0.875rem;
   text-align: right;
+}
+
+.connection-progress-note {
+  margin: var(--wallo-space-3) 0 0;
+  color: var(--wallo-color-text-muted);
+  font-size: 0.75rem;
+  text-align: center;
 }
 
 .asset-group-info {
